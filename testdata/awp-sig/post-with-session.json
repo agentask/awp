@@ -1,0 +1,24 @@
+{
+  "name": "post-with-session",
+  "description": "POST with AWP-Session: the header is covered by the signature.",
+  "domain": "caller.example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "9zTgBPy9BuVcM3VzaFh6zZ2lJPyY0Jtwssh95UHXnP4",
+  "public_key_b64url": "vD07QprlnfKEs6whdOqPg4A7JtNg3YKgB9Bl0Du33HM",
+  "method": "POST",
+  "target_uri": "https://provider.example.com/awp/tools/tool",
+  "body_b64url": "e30",
+  "extra_headers": {
+    "AWP-Session": "opaque-session-token-abc123"
+  },
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\" \"content-digest\" \"awp-session\");created=1753088043;keyid=\"caller.example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:cjwZ_K2KvX6RIKFVTyUIz8peUPizJAy-mFSs2Ed7FMZQ60sEJXP1OU5nyxtRPQL8pheTit61yqgumox7W3tlCg:",
+  "content_digest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://provider.example.com/awp/tools/tool\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"awp-session\": opaque-session-token-abc123\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\" \"awp-session\");created=1753088043;keyid=\"caller.example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 0
+  },
+  "note": "A conforming verifier must resolve/accept the session token itself; this vector only proves AWP-Session is correctly covered by the signature."
+}

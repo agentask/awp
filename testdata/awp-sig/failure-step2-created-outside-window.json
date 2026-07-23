@@ -1,0 +1,21 @@
+{
+  "name": "failure-step2-created-outside-window",
+  "description": "verify_at is 1 hour after created, well outside the +-300s replay window.",
+  "domain": "example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "FIqzHOund7_6HgxVg1jtawsOl-EXR4_qVqxuQS1jbY8",
+  "public_key_b64url": "Q1IrdS8HBv5HfZ-eUc0dmb8RSeMnfExXrMFqZzjOyro",
+  "method": "POST",
+  "target_uri": "https://example.com/awp/tools/tool",
+  "body_b64url": "e30",
+  "created": 1753088043,
+  "verify_at": "2025-07-21T09:54:03Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:0tkxl7ngfyAFX3FGXT9xf8FD8GV6bbpUo4C3bTyU7TN3GoUu23fxlVAka7ubUaMlRYQM68H0GhxaoNW500JVBA:",
+  "content_digest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://example.com/awp/tools/tool\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 401,
+    "code": "unauthorized"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "failure-step6-delegation-invalid",
+  "description": "AWP-Delegation's final delegate does not equal the request's signing principal (core §2.5 rule 4).",
+  "domain": "assistant.acme.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "xHMlVY1Lz8OCkGl1BhIc0v19078U2ck3VjgL9c4JS58",
+  "public_key_b64url": "tNqKk0oqgKX1wbMJphDoj7xtERsbEAubkAVvPichG0o",
+  "method": "POST",
+  "target_uri": "https://provider.example.com/awp/tools/tool",
+  "body_b64url": "e30",
+  "extra_headers": {
+    "AWP-Delegation": "W3siZGVsZWdhdG9yIjoidXNlci1yb290LmV4YW1wbGUuY29tIiwiZGVsZWdhdGUiOiJhc3Npc3RhbnQuYWNtZS5jb20jcmVsYXkiLCJzY29wZSI6eyJ0byI6InByb3ZpZGVyLmV4YW1wbGUuY29tI3Rvb2wifSwiZXhwaXJlcyI6IjIwMjUtMDctMjFUMDk6NTQ6MDNaIiwibm9uY2UiOiIwMWFyejNuZGVrdHN2NHJyZmZxNjlnNWZhdiIsInNpZyI6eyJraWQiOiJrMSIsInZhbHVlIjoiRDZybFd3UlFUeGNnWThVU1hVZ0pXUXNuZGlLNG9KWHlXblRmbHFzNVJRTlM4SkpDNzdNUGhocmR6Q2lJeFBUSTZOZUhZR3I3U3JMSHI5dVhPY21SQkEifX0seyJkZWxlZ2F0b3IiOiJhc3Npc3RhbnQuYWNtZS5jb20jcmVsYXkiLCJkZWxlZ2F0ZSI6InNvbWVvbmUtZWxzZS5leGFtcGxlLmNvbSIsInNjb3BlIjp7fSwiZXhwaXJlcyI6IjIwMjUtMDctMjFUMDk6NTQ6MDNaIiwibm9uY2UiOiIwMWFyejNuZGVrdHN2NHJyZmZxNjlnNWZidiIsInNpZyI6eyJraWQiOiIyMDI2LTA3LTAxIiwidmFsdWUiOiJqaVN1OTRkcU11V0RSaG4xRG9hbkt5TENpckFRYkw0a3Qxa3E3RUVnbHItMWlsVnhWZDdmWGhyLVViakxxWFZCVlkza095ZEhLWERMamg0QmFYZDVEUSJ9fV0"
+  },
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\" \"content-digest\" \"awp-delegation\");created=1753088043;keyid=\"assistant.acme.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:vLfnDkr94BtoubsF-WGmWEOCyVJCEjhHqurFwYWc0PQC2L6QN9xayOl5FyqO-dkuR4MJETVz-jkMRRjZ0QusBw:",
+  "content_digest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://provider.example.com/awp/tools/tool\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"awp-delegation\": W3siZGVsZWdhdG9yIjoidXNlci1yb290LmV4YW1wbGUuY29tIiwiZGVsZWdhdGUiOiJhc3Npc3RhbnQuYWNtZS5jb20jcmVsYXkiLCJzY29wZSI6eyJ0byI6InByb3ZpZGVyLmV4YW1wbGUuY29tI3Rvb2wifSwiZXhwaXJlcyI6IjIwMjUtMDctMjFUMDk6NTQ6MDNaIiwibm9uY2UiOiIwMWFyejNuZGVrdHN2NHJyZmZxNjlnNWZhdiIsInNpZyI6eyJraWQiOiJrMSIsInZhbHVlIjoiRDZybFd3UlFUeGNnWThVU1hVZ0pXUXNuZGlLNG9KWHlXblRmbHFzNVJRTlM4SkpDNzdNUGhocmR6Q2lJeFBUSTZOZUhZR3I3U3JMSHI5dVhPY21SQkEifX0seyJkZWxlZ2F0b3IiOiJhc3Npc3RhbnQuYWNtZS5jb20jcmVsYXkiLCJkZWxlZ2F0ZSI6InNvbWVvbmUtZWxzZS5leGFtcGxlLmNvbSIsInNjb3BlIjp7fSwiZXhwaXJlcyI6IjIwMjUtMDctMjFUMDk6NTQ6MDNaIiwibm9uY2UiOiIwMWFyejNuZGVrdHN2NHJyZmZxNjlnNWZidiIsInNpZyI6eyJraWQiOiIyMDI2LTA3LTAxIiwidmFsdWUiOiJqaVN1OTRkcU11V0RSaG4xRG9hbkt5TENpckFRYkw0a3Qxa3E3RUVnbHItMWlsVnhWZDdmWGhyLVViakxxWFZCVlkza095ZEhLWERMamg0QmFYZDVEUSJ9fV0\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\" \"awp-delegation\");created=1753088043;keyid=\"assistant.acme.com/2026-07-01\";alg=\"ed25519\"",
+  "trusted_keys": [
+    {
+      "domain": "user-root.example.com",
+      "kid": "k1",
+      "pub_b64url": "Y_O4nizlF9zqhWM9nxVcRdVlJ-k4g-61ccTwWRtqV0g"
+    }
+  ],
+  "delegation_target": "provider.example.com#tool",
+  "expect": {
+    "status": 403,
+    "code": "unauthorized_delegation"
+  }
+}

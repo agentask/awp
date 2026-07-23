@@ -1,0 +1,21 @@
+{
+  "name": "failure-step3-digest-mismatch",
+  "description": "Content-Digest header is replaced after signing; must be rejected at step 3, before the signature is ever checked (step 5 would also fail, but must never be reached).",
+  "domain": "example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "UAGEDyA33WxobHKP-bsuVcNtICC-zGs5tqNDRZA37Sg",
+  "public_key_b64url": "rDgqtPYGuh5lqe9EmyNE6-sbdgDaIbpRLt32BdN3uxk",
+  "method": "POST",
+  "target_uri": "https://example.com/awp/tools/tool",
+  "body_b64url": "eyJvcmlnaW5hbCI6dHJ1ZX0",
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:fd7GZQ81rsyVBRQtCQCBro0qHJf67WFQJQJy_QrKl4cOxZstvyK9T5-xc3IWZzgy88Bjh6jiBHW3iYgC6TCiBQ:",
+  "content_digest": "sha-256=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://example.com/awp/tools/tool\n\"content-digest\": sha-256=:bSRfidhOjR38ncIttBe1AGMJAbhY1aKGmvRNum4B+jk=:\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 400,
+    "code": "malformed"
+  }
+}

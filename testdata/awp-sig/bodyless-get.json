@@ -1,0 +1,19 @@
+{
+  "name": "bodyless-get",
+  "description": "Bodyless GET: no Content-Digest, no body-related components.",
+  "domain": "example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "UyS8ImMqoi1Jkot6cnZB1JmQxx5npoQQXLjA3rjUl7I",
+  "public_key_b64url": "gvG3KWjlcNcWwY1mcol-6b3GGQ3ZSBKVSzX0EizWxUA",
+  "method": "GET",
+  "target_uri": "https://example.com/awp/tools/generate-invoice",
+  "body_b64url": null,
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:22ZlEwfvEM359GRwCJUOFcYsvv-YrMA-G_DvwwAZa73pHeG-MjhLAhto77Ej2LQTDRyPkEpKBxYBlYVUo2AKDQ:",
+  "signature_base": "\"@method\": GET\n\"@target-uri\": https://example.com/awp/tools/generate-invoice\n\"@signature-params\": (\"@method\" \"@target-uri\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 0
+  }
+}

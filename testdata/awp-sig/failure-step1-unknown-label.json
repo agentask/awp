@@ -1,0 +1,21 @@
+{
+  "name": "failure-step1-unknown-label",
+  "description": "Signature-Input uses a label other than \"awp\".",
+  "domain": "example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "YwEo1B34aDrD_GMFsg5WYO9pmFEsX5H4BfLAdNpZslY",
+  "public_key_b64url": "uAuRtMn0sEEKDmGL6stsUMFEroBv0cvDR7D1S2T9ftU",
+  "method": "POST",
+  "target_uri": "https://example.com/awp/tools/tool",
+  "body_b64url": "e30",
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "other=(\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:H6UjZf5pnbUxY3hb2pnSglTx8eH0ct0Ou-Pwf5umWzdI30s-faSozaVWpAdKI2tTb7G1sHQsadsvlYFfCVuwDg:",
+  "content_digest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://example.com/awp/tools/tool\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 400,
+    "code": "malformed"
+  }
+}

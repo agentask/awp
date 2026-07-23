@@ -1,0 +1,24 @@
+{
+  "name": "failure-step7-session-invalid",
+  "description": "AWP-Session is correctly signed/covered, but the token itself is invalid/expired/not-this-caller's per the provider's own session verification.",
+  "domain": "caller.example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "j-9lJ4XybXzlowbIlc5e8KATzkX7UIBLk38MF-Zu0S4",
+  "public_key_b64url": "klUYbK_EJClu4UupW6c9F5DtkMj3EiOnwxsod00HqYk",
+  "method": "POST",
+  "target_uri": "https://provider.example.com/awp/tools/tool",
+  "body_b64url": "e30",
+  "extra_headers": {
+    "AWP-Session": "some-token-the-provider-rejects"
+  },
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\" \"content-digest\" \"awp-session\");created=1753088043;keyid=\"caller.example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:LFM6ULAoqDZabEwltg-zbHrXJjjPYnv-1TmDiZAZXFq9o-7uLFDBruDT5iSS30FfR6m59alR9Ri7jQm0w18LBQ:",
+  "content_digest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://provider.example.com/awp/tools/tool\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"awp-session\": some-token-the-provider-rejects\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\" \"awp-session\");created=1753088043;keyid=\"caller.example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 401,
+    "code": "unauthorized"
+  }
+}

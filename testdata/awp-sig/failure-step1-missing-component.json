@@ -1,0 +1,22 @@
+{
+  "name": "failure-step1-missing-component",
+  "description": "Signature-Input's declared component list drops \"content-digest\", which is present and required for a POST with a body.",
+  "domain": "example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "1dV_dvEbaFQRlh6RI1RJO-fVYDDTJy7IqTqM_sskxbw",
+  "public_key_b64url": "e80TKMr1GirXCPmJwplhiTf14GHRlE_E9RzlpZfHxwY",
+  "method": "POST",
+  "target_uri": "https://example.com/awp/tools/tool",
+  "body_b64url": "e30",
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:f92blW3n4tuQPwAL6JQtL7qYGDvAL9SnbGqIhKXNm0IWDS9qiFsU3vLggG0VXxCBsZm_bmx_9zs4m5Xvq3oFCg:",
+  "content_digest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://example.com/awp/tools/tool\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 400,
+    "code": "malformed"
+  },
+  "note": "Correctly-signed Signature-Input for reference: awp=(\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\""
+}

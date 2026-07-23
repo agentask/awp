@@ -1,0 +1,22 @@
+{
+  "name": "failure-step4-unknown-key",
+  "description": "The verifier's key resolver has no entry for this request's (domain, kid).",
+  "domain": "example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "XHKWQdtux92h9U5IF-7Li-qoDmKM-ZytST0Ar0bTKcw",
+  "public_key_b64url": "",
+  "method": "POST",
+  "target_uri": "https://example.com/awp/tools/tool",
+  "body_b64url": "e30",
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:UWr4Ai93ioMSE2o99_Ca8SFyxm_hFYKqmw5CGqxiB1TW6YuyEs80StxVmaraDPzLtCS7IAa8IVcz2CeuwDaWDA:",
+  "content_digest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://example.com/awp/tools/tool\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 401,
+    "code": "unauthorized"
+  },
+  "note": "public_key_b64url is intentionally omitted: a conforming verifier for this vector has no key material for example.com/2026-07-01 at all."
+}

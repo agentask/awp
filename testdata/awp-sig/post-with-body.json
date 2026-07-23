@@ -1,0 +1,20 @@
+{
+  "name": "post-with-body",
+  "description": "POST with a body: Content-Digest is computed and covered.",
+  "domain": "example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "jug3JcFZo7SZXof4oMkA8bSb1uHNyQBD2XvPyBHq-7w",
+  "public_key_b64url": "cQEGRV7HQxvloZahbn7uh0KmHoxz8BhKLLOu3X92_Jo",
+  "method": "POST",
+  "target_uri": "https://example.com/awp/tools/generate-invoice",
+  "body_b64url": "eyJhbW91bnQiOjQyLCJjdXJyZW5jeSI6IlVTRCJ9",
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:Mbe1sFBuObXNHcRJoIaVHk7KUYe-vuPlbAW58rEawRj5E4jt-rs3K0wi1N_i0xec0-hTTA3acpT1xf36ie3LAA:",
+  "content_digest": "sha-256=:639c9xHnYYAoP7SZqs3DJAiQTQCZ8Wm2NvuWsiQmzuo=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://example.com/awp/tools/generate-invoice\n\"content-digest\": sha-256=:639c9xHnYYAoP7SZqs3DJAiQTQCZ8Wm2NvuWsiQmzuo=:\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 0
+  }
+}

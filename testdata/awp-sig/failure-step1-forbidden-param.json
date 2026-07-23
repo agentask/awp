@@ -1,0 +1,21 @@
+{
+  "name": "failure-step1-forbidden-param",
+  "description": "Signature-Input carries a forbidden `expires` parameter (awp-sig §1.2 MUST NOT appear).",
+  "domain": "example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "kuihAeWpQUm9X1V_v34PG1XSh8qc_2QMRrM6RR3PtZQ",
+  "public_key_b64url": "8SdfZEgBh37ZHmUjAdD8g_ibFpW5LNavgp4z6NZQMfI",
+  "method": "POST",
+  "target_uri": "https://example.com/awp/tools/tool",
+  "body_b64url": "e30",
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\";expires=1753089000",
+  "signature": "awp=:9S-IZ5rXIp1s8I40EjvdH58mTAl6uH0lfnimm166--BIrbsxcI9WKD5YSXCiudii2P8oxXFA-832K8BrA12aAA:",
+  "content_digest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+  "signature_base": "\"@method\": POST\n\"@target-uri\": https://example.com/awp/tools/tool\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\");created=1753088043;keyid=\"example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 400,
+    "code": "malformed"
+  }
+}
