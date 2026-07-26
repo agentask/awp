@@ -8,6 +8,7 @@ package keyresolver
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,19 @@ import (
 	"github.com/agentask/awp/internal/identity"
 	"github.com/agentask/awp/internal/store"
 )
+
+// ErrIdentityDiscontinuity means a freshly fetched index's active keys
+// don't chain — either by being identical to, or by a valid core §1.1
+// rule 2 rotation from — any key this resolver previously trusted for the
+// domain. This is core §1.1's "a domain that loses all keys restarts with
+// no continuity" case: it MUST NOT be silently accepted as an ordinary
+// rotation (that would let a stolen or newly-generated key impersonate the
+// domain to anyone who already trusted it). Resolve/Refresh both leave the
+// prior trusted state untouched and return this error; only an explicit
+// Reset call may accept the new key set as a new identity (TOFU reset,
+// "surfaced to the operator, never silent" — Reset is that explicit,
+// deliberate surfacing point).
+var ErrIdentityDiscontinuity = errors.New("keyresolver: fetched index's keys do not chain from any previously trusted key for this domain (possible key loss or attack) — call Reset to accept it as a new identity")
 
 // HTTPResolver resolves domain keys over HTTP.
 type HTTPResolver struct {
@@ -61,16 +75,25 @@ func (r *HTTPResolver) Resolve(domain, kid string) (ed25519.PublicKey, error) {
 	return keyFor(idx, domain, kid)
 }
 
-// Refresh evicts domain's cache entry and re-fetches — the core §0.1
-// "re-fetch the signer's index once on failure before hard-failing
-// (rotation race)" primitive (awpd-store §2: "Refresh(domain) ... deletes
-// then re-fetches").
+// Refresh forces a re-fetch — the core §0.1 "re-fetch the signer's index
+// once on failure before hard-failing (rotation race)" primitive. It does
+// NOT erase the previously trusted key set first: the re-fetched index
+// still has to chain from whatever was trusted before (see
+// ErrIdentityDiscontinuity). Refresh is a cache-invalidation retry, not a
+// trust reset — those are deliberately different operations.
 func (r *HTTPResolver) Refresh(domain string) error {
-	if err := r.Store.DeleteKeysCache(domain); err != nil {
-		return err
-	}
 	_, err := r.load(domain, true)
 	return err
+}
+
+// Reset discards domain's trusted key state entirely, so the next
+// Resolve/Refresh treats the next fetched index as a first sighting
+// (TOFU) rather than requiring rotation continuity from it. This is the
+// explicit, deliberate action core §1.1 rule 2 requires when a domain's
+// key history is legitimately broken (lost keys, operator-initiated
+// re-bootstrap) — never triggered automatically by this package.
+func (r *HTTPResolver) Reset(domain string) error {
+	return r.Store.DeleteKeysCache(domain)
 }
 
 // ResolveInbox returns domain's advertised inbox URL (core §1.1: "inbox:
@@ -119,14 +142,9 @@ func keyFor(idx *identity.Index, domain, kid string) (ed25519.PublicKey, error) 
 }
 
 func (r *HTTPResolver) load(domain string, force bool) (*identity.Index, error) {
-	if !force {
-		if raw, found, err := r.Store.GetKeysCache(domain); err == nil && found {
-			var idx identity.Index
-			if err := json.Unmarshal(raw, &idx); err == nil {
-				return &idx, nil
-			}
-			// Corrupt cache entry: fall through and re-fetch.
-		}
+	cachedIdx, cacheFound := r.cachedIndex(domain)
+	if !force && cacheFound {
+		return cachedIdx, nil
 	}
 
 	raw, err := r.fetch(domain)
@@ -140,10 +158,59 @@ func (r *HTTPResolver) load(domain string, force bool) (*identity.Index, error) 
 	if err := idx.VerifySelfSig(); err != nil {
 		return nil, fmt.Errorf("keyresolver: %s's index signature invalid: %w", domain, err)
 	}
+
+	// core §1.1 rule 2: a rotation is only trustworthy if it chains from a
+	// key this resolver already trusted. A first-ever sighting (no prior
+	// cache) is TOFU by definition — nothing to chain from yet.
+	if cacheFound {
+		if err := verifyContinuity(cachedIdx, &idx); err != nil {
+			return nil, fmt.Errorf("keyresolver: %s: %w", domain, err)
+		}
+	}
+
 	if err := r.Store.PutKeysCache(domain, raw, r.clock().Now(), ""); err != nil {
 		return nil, err
 	}
 	return &idx, nil
+}
+
+func (r *HTTPResolver) cachedIndex(domain string) (*identity.Index, bool) {
+	raw, found, err := r.Store.GetKeysCache(domain)
+	if err != nil || !found {
+		return nil, false
+	}
+	var idx identity.Index
+	if err := json.Unmarshal(raw, &idx); err != nil {
+		return nil, false // corrupt cache entry: treat as no prior trust
+	}
+	return &idx, true
+}
+
+// verifyContinuity checks that newIdx's active keys are either identical
+// to, or a valid one-step core §1.1 rule 2 rotation from, some key in
+// oldIdx — i.e. some key this resolver already trusted for the domain.
+func verifyContinuity(oldIdx, newIdx *identity.Index) error {
+	for _, newKey := range newIdx.Keys {
+		if newKey.Revoked {
+			continue
+		}
+		for _, oldKey := range oldIdx.Keys {
+			if newKey.Kid == oldKey.Kid && newKey.Pub == oldKey.Pub {
+				return nil // unchanged key, trivially continuous
+			}
+		}
+	}
+	for _, newKey := range newIdx.Keys {
+		if newKey.Revoked {
+			continue
+		}
+		for _, oldKey := range oldIdx.Keys {
+			if identity.VerifyRotationChain([]identity.Key{oldKey, newKey}) == nil {
+				return nil // valid rotation from a previously trusted key
+			}
+		}
+	}
+	return ErrIdentityDiscontinuity
 }
 
 func (r *HTTPResolver) fetch(domain string) ([]byte, error) {

@@ -148,7 +148,7 @@ func TestMarkDead_TableDriven(t *testing.T) {
 			if !tt.claimFirst {
 				reason = "expired"
 			}
-			if err := s.MarkDead(id, reason, "detail"); err != nil {
+			if err := s.MarkDead(id, reason, "detail", now); err != nil {
 				t.Fatalf("MarkDead: %v", err)
 			}
 
@@ -236,7 +236,7 @@ func TestBootRecovery_LeavesQueuedAndDeadUntouched(t *testing.T) {
 	if err := s.EnqueueOutbound(deadID, []byte("{}"), now); err != nil {
 		t.Fatalf("enqueue dead: %v", err)
 	}
-	if err := s.MarkDead(deadID, "expired", "ttl"); err != nil {
+	if err := s.MarkDead(deadID, "expired", "ttl", now); err != nil {
 		t.Fatalf("MarkDead: %v", err)
 	}
 

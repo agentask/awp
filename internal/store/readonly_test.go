@@ -17,7 +17,7 @@ func TestOpenReadOnly_ReadsExistingData(t *testing.T) {
 	if err := s.EnqueueOutbound(id, []byte("{}"), now); err != nil {
 		t.Fatalf("EnqueueOutbound: %v", err)
 	}
-	if err := s.MarkDead(id, "expired", "ttl exceeded"); err != nil {
+	if err := s.MarkDead(id, "expired", "ttl exceeded", now); err != nil {
 		t.Fatalf("MarkDead: %v", err)
 	}
 	if err := s.Close(); err != nil {

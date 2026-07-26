@@ -50,6 +50,7 @@ Usage:
         -key string        Path to a PEM-encoded ed25519 private key (self-test identity).
         -kid string        Key id matching -key, as registered in the target's own index.
         -timeout duration  Overall run timeout (default 30s).
+        -insecure          Skip TLS certificate verification over HTTPS (self-signed local awpd, dev only).
         -quic-insecure     Skip TLS certificate verification when dialing awp/1 (dev only).
 
   awp outbox ls --dead -data <dir>
@@ -63,6 +64,7 @@ func runConformance(args []string) int {
 	keyPath := fs.String("key", "", "path to a PEM-encoded ed25519 private key")
 	kid := fs.String("kid", "", "key id matching -key")
 	timeout := fs.Duration("timeout", 30*time.Second, "overall run timeout")
+	insecure := fs.Bool("insecure", false, "skip TLS certificate verification over HTTPS (self-signed local awpd, dev only)")
 	quicInsecure := fs.Bool("quic-insecure", false, "skip TLS certificate verification when dialing awp/1")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -73,7 +75,11 @@ func runConformance(args []string) int {
 	}
 	domain := fs.Arg(0)
 
-	opts := conformance.Options{HTTP: &http.Client{Timeout: 10 * time.Second}}
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	if *insecure {
+		httpClient.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // explicit opt-in dev flag
+	}
+	opts := conformance.Options{HTTP: httpClient}
 	if *baseURL != "" {
 		opts.BaseURL = func(string) string { return *baseURL }
 	}

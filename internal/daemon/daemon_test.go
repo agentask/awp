@@ -199,3 +199,45 @@ func TestProcessInboundOnce_NonMessageKindsRecordButDoNotAutoRespond(t *testing.
 		t.Fatalf("expected no auto-response to a `reply`, got %d outbound records", len(due))
 	}
 }
+
+func TestRunGCOnce_DeletesExpiredSeenAndPastRetentionDeadLetters(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	fixed := clock.NewFixed(now)
+	d := newUnitTestDaemon(t, "a.example.com", fixed)
+	d.DeadRetention = 24 * time.Hour
+
+	expiredSeenID := envelope.NewID()
+	if _, err := d.Store.AcceptInbound(expiredSeenID, now.Add(-time.Hour), []byte("{}")); err != nil {
+		t.Fatalf("AcceptInbound: %v", err)
+	}
+
+	deadID := envelope.NewID()
+	if err := d.Store.EnqueueOutbound(deadID, []byte("{}"), now); err != nil {
+		t.Fatalf("EnqueueOutbound: %v", err)
+	}
+	if err := d.Store.MarkDead(deadID, "expired", "ttl", now.Add(-48*time.Hour)); err != nil {
+		t.Fatalf("MarkDead: %v", err)
+	}
+
+	seenDeleted, deadDeleted, err := d.RunGCOnce()
+	if err != nil {
+		t.Fatalf("RunGCOnce: %v", err)
+	}
+	if seenDeleted != 1 {
+		t.Fatalf("expected 1 seen entry deleted, got %d", seenDeleted)
+	}
+	if deadDeleted != 1 {
+		t.Fatalf("expected 1 dead letter deleted, got %d", deadDeleted)
+	}
+
+	if _, found, _ := d.Store.GetOutbox(deadID); found {
+		t.Fatal("expected the past-retention dead letter to be gone")
+	}
+}
+
+func TestNew_DeadRetentionDefaultsWhenUnset(t *testing.T) {
+	d := newUnitTestDaemon(t, "a.example.com", clock.NewFixed(time.Now()))
+	if d.DeadRetention != DefaultDeadRetention {
+		t.Fatalf("expected DeadRetention to default to %v, got %v", DefaultDeadRetention, d.DeadRetention)
+	}
+}

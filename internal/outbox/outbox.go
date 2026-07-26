@@ -72,21 +72,21 @@ func fullJitterBackoff(base, capDur time.Duration, attempts int) time.Duration {
 // resulting state transition to st. It never mutates rec.Envelope
 // (awpd-outbox §2 rule 4: "same bytes every attempt").
 func Attempt(ctx context.Context, st *store.Store, clk clock.Clock, sender Sender, cfg Config, rec store.OutboxRecord) (Transition, error) {
+	now := clk.Now()
 	var env envelope.Envelope
 	if err := json.Unmarshal(rec.Envelope, &env); err != nil {
-		return TransitionDeadRejected, st.MarkDead(rec.ID, "rejected", "unparseable envelope: "+err.Error())
+		return TransitionDeadRejected, st.MarkDead(rec.ID, "rejected", "unparseable envelope: "+err.Error(), now)
 	}
 	ts, err := time.Parse(time.RFC3339, env.Ts)
 	if err != nil {
-		return TransitionDeadRejected, st.MarkDead(rec.ID, "rejected", "unparseable ts: "+err.Error())
+		return TransitionDeadRejected, st.MarkDead(rec.ID, "rejected", "unparseable ts: "+err.Error(), now)
 	}
 	expiry := ts.Add(time.Duration(env.TTL) * time.Second)
-	now := clk.Now()
 
 	// Rule 1: pre-attempt expiry check — never send an envelope the
 	// receiver is obligated to 410.
 	if now.After(expiry) {
-		if err := st.MarkDead(rec.ID, "expired", "ttl exceeded before attempt"); err != nil {
+		if err := st.MarkDead(rec.ID, "expired", "ttl exceeded before attempt", now); err != nil {
 			return TransitionNone, err
 		}
 		return TransitionDeadExpired, nil
@@ -120,7 +120,7 @@ func Attempt(ctx context.Context, st *store.Store, clk clock.Clock, sender Sende
 		return TransitionRetry, st.MarkRetry(rec.ID, nextAt, statusDetail(status))
 
 	default: // 4xx other than 429: dead, not retryable
-		return TransitionDeadRejected, st.MarkDead(rec.ID, "rejected", statusDetail(status))
+		return TransitionDeadRejected, st.MarkDead(rec.ID, "rejected", statusDetail(status), now)
 	}
 }
 

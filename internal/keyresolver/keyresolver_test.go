@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -54,6 +55,30 @@ func signedIndex(t *testing.T, domain, kid string, pub ed25519.PublicKey, priv e
 	raw, err := json.Marshal(idx)
 	if err != nil {
 		t.Fatalf("marshal index: %v", err)
+	}
+	return raw
+}
+
+// rotatedSignedIndex builds an index whose sole active key is a valid core
+// §1.1 rule 2 rotation from prevPriv — prev_sig is prevPriv's signature
+// over the new key's raw pub bytes.
+func rotatedSignedIndex(t *testing.T, domain, newKid string, newPub ed25519.PublicKey, newPriv, prevPriv ed25519.PrivateKey, inbox string) []byte {
+	t.Helper()
+	prevSig := base64.RawURLEncoding.EncodeToString(ed25519.Sign(prevPriv, newPub))
+	idx := &identity.Index{
+		Awp: "0.1", Domain: domain, Updated: "2026-07-21T10:00:00.000Z",
+		Keys: []identity.Key{{
+			Kid: newKid, Alg: "ed25519", Pub: base64.RawURLEncoding.EncodeToString(newPub),
+			Created: "2026-07-21T10:00:00.000Z", PrevSig: &prevSig,
+		}},
+		Inbox: inbox,
+	}
+	if err := idx.Sign(newPriv, newKid); err != nil {
+		t.Fatalf("sign rotated index: %v", err)
+	}
+	raw, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatalf("marshal rotated index: %v", err)
 	}
 	return raw
 }
@@ -119,7 +144,7 @@ func TestResolve_FetchesAndCaches(t *testing.T) {
 	}
 }
 
-func TestRefresh_ForcesRefetch(t *testing.T) {
+func TestRefresh_ForcesRefetch_ValidRotationAccepted(t *testing.T) {
 	pub1, priv1 := mustKeypair(t)
 	pub2, priv2 := mustKeypair(t)
 	const domain = "rotating.example.com"
@@ -135,8 +160,8 @@ func TestRefresh_ForcesRefetch(t *testing.T) {
 		t.Fatalf("Resolve v1: %v", err)
 	}
 
-	// Domain rotates to a new key entirely and republishes.
-	rawV2 := signedIndex(t, domain, "k2", pub2, priv2, "http://x/awp/inbox", false)
+	// Domain rotates to a new key, properly chained via prev_sig from k1.
+	rawV2 := rotatedSignedIndex(t, domain, "k2", pub2, priv2, priv1, "http://x/awp/inbox")
 	switchable.set(rawV2)
 
 	// Without Refresh, the stale cache still only knows k1.
@@ -153,6 +178,84 @@ func TestRefresh_ForcesRefetch(t *testing.T) {
 	}
 	if string(got) != string(pub2) {
 		t.Fatal("resolved key does not match the rotated key")
+	}
+}
+
+// core §1.1 rule 2: a key that appears with no continuity from any
+// previously trusted key must NOT be silently accepted as a rotation.
+func TestRefresh_RejectsDiscontinuousRotation(t *testing.T) {
+	pub1, priv1 := mustKeypair(t)
+	pub2, priv2 := mustKeypair(t) // unrelated key, no prev_sig chain from pub1
+	const domain = "discontinuous.example.com"
+
+	rawV1 := signedIndex(t, domain, "k1", pub1, priv1, "http://x/awp/inbox", false)
+	switchable, srv := newSwitchableIndexServer(rawV1)
+	defer srv.Close()
+
+	st := openTestStore(t)
+	r := &HTTPResolver{Store: st, Clock: clock.NewFixed(time.Now()), BaseURL: func(string) string { return srv.URL }}
+
+	if _, err := r.Resolve(domain, "k1"); err != nil {
+		t.Fatalf("Resolve v1: %v", err)
+	}
+
+	rawV2 := signedIndex(t, domain, "k2", pub2, priv2, "http://x/awp/inbox", false)
+	switchable.set(rawV2)
+
+	err := r.Refresh(domain)
+	if !errors.Is(err, ErrIdentityDiscontinuity) {
+		t.Fatalf("expected ErrIdentityDiscontinuity, got %v", err)
+	}
+
+	// The prior trusted key must still resolve — a rejected rotation
+	// leaves existing trust untouched.
+	got, err := r.Resolve(domain, "k1")
+	if err != nil {
+		t.Fatalf("Resolve k1 after rejected rotation: %v", err)
+	}
+	if string(got) != string(pub1) {
+		t.Fatal("resolved key changed despite the rejected rotation")
+	}
+	if _, err := r.Resolve(domain, "k2"); err == nil {
+		t.Fatal("expected k2 to remain untrusted after the rejected rotation")
+	}
+}
+
+// Reset is the explicit, deliberate action that accepts a discontinuous
+// key set as a new identity (TOFU reset).
+func TestReset_AcceptsNewIdentityAfterDiscontinuity(t *testing.T) {
+	pub1, priv1 := mustKeypair(t)
+	pub2, priv2 := mustKeypair(t)
+	const domain = "reset-me.example.com"
+
+	rawV1 := signedIndex(t, domain, "k1", pub1, priv1, "http://x/awp/inbox", false)
+	switchable, srv := newSwitchableIndexServer(rawV1)
+	defer srv.Close()
+
+	st := openTestStore(t)
+	r := &HTTPResolver{Store: st, Clock: clock.NewFixed(time.Now()), BaseURL: func(string) string { return srv.URL }}
+
+	if _, err := r.Resolve(domain, "k1"); err != nil {
+		t.Fatalf("Resolve v1: %v", err)
+	}
+
+	rawV2 := signedIndex(t, domain, "k2", pub2, priv2, "http://x/awp/inbox", false)
+	switchable.set(rawV2)
+
+	if err := r.Refresh(domain); !errors.Is(err, ErrIdentityDiscontinuity) {
+		t.Fatalf("expected ErrIdentityDiscontinuity before Reset, got %v", err)
+	}
+
+	if err := r.Reset(domain); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	got, err := r.Resolve(domain, "k2")
+	if err != nil {
+		t.Fatalf("Resolve k2 after Reset: %v", err)
+	}
+	if string(got) != string(pub2) {
+		t.Fatal("resolved key does not match the post-reset key")
 	}
 }
 

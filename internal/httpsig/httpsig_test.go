@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -422,5 +424,95 @@ func TestVerify_Step4_RefreshAttemptedOnceOnKeyResolveFailure(t *testing.T) {
 	}
 	if len(resolver.refreshed) != 1 || resolver.refreshed[0] != "caller.example.com" {
 		t.Fatalf("expected exactly one refresh of caller.example.com, got %v", resolver.refreshed)
+	}
+}
+
+// TestSignVerify_RealHTTPRoundTrip catches a real bug class in-process
+// tests can't see: Go's net/http server strips scheme+host off an
+// incoming request line, so req.URL on the server side is NOT what the
+// client signed unless the handler reconstructs it first via
+// AbsolutizeServerRequestURL. This sends an actual request over a real
+// listener (httptest.Server), not the same *http.Request object reused
+// for both Sign and Verify.
+func TestSignVerify_RealHTTPRoundTrip(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	resolver := newFakeResolver()
+	resolver.add("caller.example.com", "k1", pub)
+
+	var verifyErr *apperr.Error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+			return
+		}
+		AbsolutizeServerRequestURL(r)
+		result := Verify(r, body, time.Now(), Deps{ResolveKey: resolver})
+		verifyErr = result.Err
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	body := []byte(`{"hello":"world"}`)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/awp/tools/tool", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if err := Sign(req, body, priv, "caller.example.com/k1", time.Now()); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if verifyErr != nil {
+		t.Fatalf("server-side Verify failed: %+v", verifyErr)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+// Without AbsolutizeServerRequestURL, the same real round-trip must fail —
+// proving the helper is actually doing something, not a no-op.
+func TestSignVerify_RealHTTPRoundTrip_FailsWithoutAbsolutize(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	resolver := newFakeResolver()
+	resolver.add("caller.example.com", "k1", pub)
+
+	var verifyErr *apperr.Error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+			return
+		}
+		// Deliberately NOT calling AbsolutizeServerRequestURL.
+		result := Verify(r, body, time.Now(), Deps{ResolveKey: resolver})
+		verifyErr = result.Err
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	body := []byte(`{"hello":"world"}`)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/awp/tools/tool", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if err := Sign(req, body, priv, "caller.example.com/k1", time.Now()); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if verifyErr == nil {
+		t.Fatal("expected Verify to fail without AbsolutizeServerRequestURL (proves the helper matters)")
 	}
 }

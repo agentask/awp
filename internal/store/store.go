@@ -171,3 +171,36 @@ func (s *Store) HasQueued(id string) (bool, error) {
 	})
 	return found, err
 }
+
+// GCSeen deletes `seen` entries whose expiry has passed (awpd-store §2:
+// "GC: hourly cursor scan deleting expired keys"). Retention itself is
+// enforced simply by never calling this before an id's own expiry —
+// AcceptInbound's expiry value already IS the retention horizon, so there
+// is no separate "retention window" to configure beyond it. Returns the
+// number of entries deleted.
+func (s *Store) GCSeen(now time.Time) (int, error) {
+	nowUnix := uint64(now.Unix())
+	var deleted int
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		seen := tx.Bucket(bucketSeen)
+		var toDelete [][]byte
+		c := seen.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			if len(v) < 8 {
+				continue
+			}
+			expiry := binary.BigEndian.Uint64(v)
+			if expiry < nowUnix {
+				toDelete = append(toDelete, append([]byte{}, k...))
+			}
+		}
+		for _, k := range toDelete {
+			if err := seen.Delete(k); err != nil {
+				return err
+			}
+			deleted++
+		}
+		return nil
+	})
+	return deleted, err
+}

@@ -778,3 +778,117 @@ wiring QUIC into `cmd/awpd`'s flags, deciding what (if anything) makes the
 four Skip-only checklist items checkable, and whatever the maintainers
 decide is next after a v0.1 reference implementation — none of that is
 this document's call to make unilaterally.
+
+## Gap closure (post-v0.1 suite)
+
+Phase 5's "operational, not architectural" list above, plus a few items
+this document had flagged as deferred along the way, closed out as a
+follow-up pass. Gate: `go build ./...`, `go vet ./...`, `gofmt -l .`, and
+`go test ./... -race -count=1` all green across every package including
+the new ones below.
+
+1. **`internal/keyresolver`: rotation-chain continuity.** The resolver's
+   cache previously treated any re-fetched index as trustworthy on its own
+   signature alone — a compromised or MITM'd re-fetch could swap in an
+   entirely unrelated key with no way to detect it after the initial TOFU
+   fetch. `Refresh` now checks the newly-fetched index's active key
+   against the *previously cached* one: either an exact match or a valid
+   one-step `identity.VerifyRotationChain` link. A genuinely broken chain
+   is rejected and the old cache entry is kept; a caller who wants to
+   deliberately re-trust a domain after a real, out-of-band key change
+   calls the new `Reset`, which is the only path that still deletes the
+   cache unconditionally. Caught during implementation: the original
+   `Refresh` deleted the cache *before* fetching, which would have made
+   continuity-checking meaningless (nothing left to compare against) —
+   fixed before it shipped.
+2. **`internal/store` / `internal/daemon`: GC loops.** `seen` entries and
+   dead-lettered outbox records accumulated forever with no eviction.
+   Added `Store.GCSeen` (deletes `seen` entries past their TTL) and
+   `Store.GCDeadLetters` (deletes dead-letter records past
+   `outbox.dead_retention`, default 720h per awpd-outbox §3), wired into
+   `Daemon.RunGCOnce` and run hourly from `cmd/awpd`.
+3. **`cmd/awpd`: real TLS termination.** The daemon previously served
+   plain HTTP; `awp/1`'s coexistence story and any real deployment both
+   assume the HTTPS floor is actually TLS. Added `-tls-cert`/`-tls-key`
+   flags for an operator-supplied certificate, and a self-signed
+   ed25519 cert generated and persisted under the data dir when neither is
+   given, so a fresh `awpd` run is HTTPS out of the box with no manual PKI
+   setup. `awp conformance` gained a matching `-insecure` flag for probing
+   a self-signed target. `awpd`'s own outbound key resolution needed a
+   `-resolve-insecure` flag too, once its own HTTPS client started
+   rejecting its own self-signed cert while resolving its own domain for
+   self-addressed conformance probes.
+4. **`cmd/awpd`: QUIC flags/wiring.** `internal/quictrans` and
+   `daemon.QUICConfig` existed since Phase 4.5 but `cmd/awpd` never
+   exposed them. Added `-quic-addr`/`-quic-dial-timeout`; when set, awpd
+   listens for `awp/1`, reuses the same TLS certificate for the QUIC
+   listener, and advertises the transport in its own signed index.
+5. **`internal/wasmrt`: the wazero stdio-json/1 runtime.** This was pure
+   scope gap — core §1.2's portable-tool contract was fully specified but
+   never implemented; nothing in Phases 1-5 exercised it. Built
+   `wasmrt.Compile` (sha256-pinned) and `wasmrt.Module.Run`/`RunWithStderr`
+   against wazero + wasi_snapshot_preview1, with clock/random capability
+   gating (`WithSysWalltime`/`WithSysNanotime`/`WithRandSource`, since
+   wazero's public API has no way to omit individual WASI imports —
+   "absent" capability means a deterministic fake clock/RNG, not a missing
+   import) and the exit-code/stdout contract from core §1.2 (nonzero exit,
+   empty stdout, or unparseable stdout are all `internal`, never
+   caller-visible). Test fixtures are real Go programs cross-compiled at
+   test time with `GOOS=wasip1 GOARCH=wasm`.
+6. **Wiring manifest+httpsig+wasmrt into a live sync tool-serving
+   endpoint.** The three pieces existed independently but nothing served
+   an actual `POST /awp/tools/{entity}` request end to end. Added
+   `daemon.RegisterTool` (signs and serves the manifest, adds a pinned
+   `entities[]` row to the domain's own index) and `serveToolCall`
+   (`httpsig.Verify` → dispatch to a native `ToolHandler` or a
+   `wasmrt.Module` → core §1.3 session issuance for `state: provider`
+   tools). This surfaced a real, previously-undetected bug: **every
+   httpsig test through Phase 5 reused the same in-memory `*http.Request`
+   for both `Sign` and `Verify`, which never exercises what Go's
+   `net/http` server actually does to an incoming request** — it strips
+   scheme+host off `req.URL`, leaving only the path, so `@target-uri`
+   verified against a server-received request was never the same string
+   the client signed. Every real signature would have failed. Fixed with
+   `httpsig.AbsolutizeServerRequestURL` (called before `Verify` in
+   `serveToolCall`), locked in with `TestSignVerify_RealHTTPRoundTrip`
+   (proves the fix works) and `..._FailsWithoutAbsolutize` (proves the
+   helper isn't a no-op) — both using `httptest.NewServer` for a genuine
+   network round trip rather than in-process object reuse.
+7. **`sdk/go`: the thin client SDK.** `CLAUDE.md`'s own layout table
+   promised this (`sdk/go    thin client`) and nothing under `sdk/`
+   existed. Deliberately does *not* reuse `internal/keyresolver` (bbolt-
+   backed, daemon-shaped) — a thin client that just wants to send one
+   envelope or make one tool call shouldn't need to open a database file,
+   so it carries its own in-memory-only index cache. Covers
+   `Client.SendEnvelope` (single delivery attempt, no retry/outbox — that
+   remains `cmd/awpd`'s job), `Client.CallTool` (resolves the manifest,
+   verifies its sha256 pin, signs the sync call, verifies the provider's
+   response signature if present), and `Client.SignDelegationLink`. Also
+   closed a related loose end while building this: `httpsig.SignResponse`
+   existed since Phase 5 with no corresponding verifier and no real
+   consumer; added `httpsig.VerifyResponse` (mirrors `Verify`'s step
+   structure for the response-only component set) so the SDK's response
+   check is real, not decorative — a present-but-invalid response
+   signature is treated as an error per awp-sig §3, an absent one is not
+   (response signing remains SHOULD, not MUST).
+
+### Explicitly still excluded (not gaps)
+
+Three categories were identified during gap review and deliberately left
+alone rather than "closed," because doing so would cut against the spec
+or against what's structurally observable — the same standard applied to
+Phase 5's Skip-only checklist items above:
+
+1. **v0.2-deferred spec items** (multiparty threads, relays, pricing
+   settlement, and everything else the spec documents mark as post-v0.1).
+   Implementing these would violate the spec's own stated v0.1/v0.2
+   boundary, not fill a v0.1 gap.
+2. **Discovery / `#search` / `#submit`.** The spec itself marks this
+   "STRAWMAN ... provisional ... post-milestone-1" — building it now would
+   mean building against a section the spec's own authors haven't
+   committed to yet.
+3. **The four permanently-Skip conformance checklist items** (§5.4, §5.5,
+   §5.7, §5.3) from Phase 5's decision 1 above. Nothing in the gap-closure
+   pass changed the structural fact that a black-box CLI prober has no
+   spec-defined API to observe internal processing/state — these remain
+   Skip with a checked-in reason, not a fabricated Pass.

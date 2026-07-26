@@ -32,6 +32,10 @@ type OutboxRecord struct {
 	NextAt     time.Time
 	LastErr    string
 	DeadReason string
+	// DeadAt is when MarkDead was called; zero for non-dead records. It is
+	// the retention clock's reference point for GCDeadLetters
+	// (awpd-outbox §2 rule 7: "dead records persist until explicit GC").
+	DeadAt time.Time
 }
 
 // outboxValue is OutboxRecord's on-disk JSON shape (ID is the bucket key,
@@ -43,6 +47,7 @@ type outboxValue struct {
 	NextAt     time.Time   `json:"next_at"`
 	LastErr    string      `json:"last_err"`
 	DeadReason string      `json:"dead_reason,omitempty"`
+	DeadAt     time.Time   `json:"dead_at"`
 }
 
 func ulidString(idBytes []byte) string {
@@ -70,6 +75,7 @@ func toRecord(id string, v outboxValue) OutboxRecord {
 		NextAt:     v.NextAt,
 		LastErr:    v.LastErr,
 		DeadReason: v.DeadReason,
+		DeadAt:     v.DeadAt,
 	}
 }
 
@@ -171,7 +177,7 @@ func (s *Store) MarkRetry(id string, nextAt time.Time, lastErr string) error {
 // MarkDead moves a record to a terminal dead state (awpd-outbox §2 rule 7:
 // dead letters are kept, not deleted, until explicit GC). reason must be
 // "expired" or "rejected"; any other value is treated as "rejected".
-func (s *Store) MarkDead(id string, reason string, lastErr string) error {
+func (s *Store) MarkDead(id string, reason string, lastErr string, deadAt time.Time) error {
 	key, err := idKey(id)
 	if err != nil {
 		return err
@@ -200,6 +206,7 @@ func (s *Store) MarkDead(id string, reason string, lastErr string) error {
 		}
 		v.DeadReason = lastErr
 		v.LastErr = lastErr
+		v.DeadAt = deadAt
 		buf, err := json.Marshal(v)
 		if err != nil {
 			return err
@@ -334,4 +341,38 @@ func (s *Store) BootRecovery(now time.Time) (int, error) {
 		return nil
 	})
 	return recovered, err
+}
+
+// GCDeadLetters deletes dead-lettered records older than retention
+// (awpd-outbox §2 rule 7 / §3 config `outbox.dead_retention`, default
+// 720h). Returns the number of records deleted.
+func (s *Store) GCDeadLetters(now time.Time, retention time.Duration) (int, error) {
+	var deleted int
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		ob := tx.Bucket(bucketOutbox)
+		var toDelete [][]byte
+		if err := ob.ForEach(func(k, v []byte) error {
+			var val outboxValue
+			if err := json.Unmarshal(v, &val); err != nil {
+				return err
+			}
+			if val.State != StateDeadExpired && val.State != StateDeadRejected {
+				return nil
+			}
+			if now.Sub(val.DeadAt) >= retention {
+				toDelete = append(toDelete, append([]byte{}, k...))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, k := range toDelete {
+			if err := ob.Delete(k); err != nil {
+				return err
+			}
+			deleted++
+		}
+		return nil
+	})
+	return deleted, err
 }

@@ -84,7 +84,15 @@ type Config struct {
 	HTTP      *http.Client // used for outbound HTTPS delivery; nil uses http.DefaultClient
 	OutboxCfg outbox.Config
 	QUIC      *QUICConfig // nil = HTTPS-only
+	// DeadRetention is how long dead-lettered outbound records are kept
+	// before RunGCOnce deletes them (awpd-outbox §3 `outbox.dead_retention`).
+	// 0 uses the spec default (720h).
+	DeadRetention time.Duration
 }
+
+// DefaultDeadRetention is awpd-outbox-v0.1.md §3's `outbox.dead_retention`
+// default.
+const DefaultDeadRetention = 720 * time.Hour
 
 // Daemon is a single AWP domain's running state: identity, store, inbox
 // gate, and outbox sender, exposed as one http.Handler serving both
@@ -92,17 +100,19 @@ type Config struct {
 // QUIC is enabled, ServeQUIC must also be run by the caller (mirroring how
 // the caller also runs the http.Server for the HTTP side).
 type Daemon struct {
-	Domain    string
-	Kid       string
-	priv      ed25519.PrivateKey
-	Store     *store.Store
-	Clock     clock.Clock
-	Gate      *inbox.Gate
-	Sender    outbox.Sender
-	OutboxCfg outbox.Config
+	Domain        string
+	Kid           string
+	priv          ed25519.PrivateKey
+	Store         *store.Store
+	Clock         clock.Clock
+	Gate          *inbox.Gate
+	Sender        outbox.Sender
+	OutboxCfg     outbox.Config
+	DeadRetention time.Duration
 
 	mu    sync.Mutex
 	index *identity.Index
+	tools map[string]*registeredTool
 
 	mux *http.ServeMux
 
@@ -149,16 +159,21 @@ func New(cfg Config) (*Daemon, error) {
 	if outboxCfg.BackoffCap == 0 && outboxCfg.BackoffBase == 0 && outboxCfg.Workers == 0 {
 		outboxCfg = outbox.DefaultConfig()
 	}
+	deadRetention := cfg.DeadRetention
+	if deadRetention == 0 {
+		deadRetention = DefaultDeadRetention
+	}
 
 	d := &Daemon{
-		Domain:    cfg.Domain,
-		Kid:       cfg.Kid,
-		priv:      cfg.Priv,
-		Store:     cfg.Store,
-		Clock:     cfg.Clock,
-		Gate:      gate,
-		OutboxCfg: outboxCfg,
-		index:     idx,
+		Domain:        cfg.Domain,
+		Kid:           cfg.Kid,
+		priv:          cfg.Priv,
+		Store:         cfg.Store,
+		Clock:         cfg.Clock,
+		Gate:          gate,
+		OutboxCfg:     outboxCfg,
+		DeadRetention: deadRetention,
+		index:         idx,
 	}
 
 	if cfg.QUIC != nil {
@@ -222,6 +237,8 @@ func (d *Daemon) buildMux() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/awp.json", d.serveIndex)
 	mux.Handle("/awp/inbox", d.Gate)
+	mux.HandleFunc("/awp/manifests/", d.serveManifest)
+	mux.HandleFunc("/awp/tools/", d.serveToolCall)
 	d.mux = mux
 }
 
@@ -294,6 +311,24 @@ func (d *Daemon) Send(kind, to, threadID string, inReplyTo *string, body json.Ra
 // RunOutboxOnce drains one tick of due outbound deliveries.
 func (d *Daemon) RunOutboxOnce(ctx context.Context) (int, error) {
 	return outbox.ProcessDue(ctx, d.Store, d.Clock, d.Sender, d.OutboxCfg, 100)
+}
+
+// RunGCOnce deletes expired `seen` entries (awpd-store §2) and
+// past-retention dead-lettered outbound records (awpd-outbox §2 rule 7).
+// A real deployment calls this on a slow cadence (e.g. hourly, per
+// awpd-store §2's "GC: hourly cursor scan"); tests call it directly
+// against an injected clock.
+func (d *Daemon) RunGCOnce() (seenDeleted, deadDeleted int, err error) {
+	now := d.Clock.Now()
+	seenDeleted, err = d.Store.GCSeen(now)
+	if err != nil {
+		return seenDeleted, 0, fmt.Errorf("daemon: gc seen: %w", err)
+	}
+	deadDeleted, err = d.Store.GCDeadLetters(now, d.DeadRetention)
+	if err != nil {
+		return seenDeleted, deadDeleted, fmt.Errorf("daemon: gc dead letters: %w", err)
+	}
+	return seenDeleted, deadDeleted, nil
 }
 
 // ProcessInboundOnce claims and processes every currently-queued inbound

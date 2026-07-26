@@ -17,6 +17,32 @@ import (
 // "created + fixed 300s window is one fewer knob to misconfigure").
 const createdWindow = 300 * time.Second
 
+// AbsolutizeServerRequestURL fills in req.URL.Scheme/Host on a
+// server-received *http.Request, in place, if either is empty.
+//
+// This matters because "@target-uri" (awp-sig §1.1, RFC 9421 §2.2.7) MUST
+// be the full absolute URI — that's what a client signs (its req.URL is
+// already absolute, since it built the request from a full URL string).
+// But Go's net/http server strips scheme+host off an incoming
+// origin-form request line, leaving req.URL with only the path/query;
+// req.Host (or the Host header) carries the authority separately. Calling
+// Verify on a raw server-received request without first calling this
+// reconstructs a DIFFERENT "@target-uri" than the client actually signed,
+// and every signature fails — not because anything is wrong, but because
+// the component was never reassembled. Server handlers MUST call this
+// (or do the equivalent themselves) before Verify.
+func AbsolutizeServerRequestURL(req *http.Request) {
+	if req.URL.Scheme != "" && req.URL.Host != "" {
+		return // already absolute (e.g. a proxy-style request line)
+	}
+	scheme := "http"
+	if req.TLS != nil {
+		scheme = "https"
+	}
+	req.URL.Scheme = scheme
+	req.URL.Host = req.Host
+}
+
 // KeyResolver resolves (domain, kid) to a public key, with a Refresh
 // primitive for the core §0.1 rotation-race retry. Same shape as
 // internal/inbox.KeyResolver, declared locally so this package doesn't
