@@ -144,9 +144,22 @@ func (c *Client) Resolve(domain, kid string) (ed25519.PublicKey, error) {
 	return nil, fmt.Errorf("awp: no key %s/%s in %s's index", domain, kid, domain)
 }
 
-// fetchManifest resolves principal's manifest via domain's index,
+// FetchManifest resolves principal's manifest via its domain's index,
 // verifying its sha256 pin (core §1.2) and its own signature before
-// returning it.
+// returning it. Exported for callers that need a manifest without making
+// a sync call against it — e.g. a caller that will fetch and run a
+// `distribution.portable` tool locally instead of calling a hosted one
+// (see examples/portable-wasm-tool).
+func (c *Client) FetchManifest(ctx context.Context, principal string) (*manifest.Manifest, error) {
+	idx, err := c.FetchIndex(ctx, identity.DomainOf(principal))
+	if err != nil {
+		return nil, fmt.Errorf("awp: resolve %s: %w", identity.DomainOf(principal), err)
+	}
+	return c.fetchManifest(ctx, idx, principal)
+}
+
+// fetchManifest is FetchManifest's implementation, reused by CallTool
+// (which has already resolved idx and doesn't need to do so twice).
 func (c *Client) fetchManifest(ctx context.Context, idx *identity.Index, principal string) (*manifest.Manifest, error) {
 	var entry *identity.Entity
 	for i := range idx.Entities {

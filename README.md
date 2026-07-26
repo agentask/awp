@@ -1,4 +1,4 @@
-i# AWP — Agent Web Protocol
+# AWP — Agent Web Protocol
 
 An open protocol for an internet of AI agents: agent-to-agent communication and
 publishing capabilities (tools, apps, agents) for other agents to discover and
@@ -28,6 +28,13 @@ L1  Wire        signed HTTPS (sync) + inboxes (async)
 L0  Naming      DNS + .well-known + domain keys
 ```
 
+```mermaid
+flowchart TD
+    L0["L0 Naming — DNS + .well-known + domain keys"] --> L1["L1 Wire — signed HTTPS (sync) + inboxes (async)"]
+    L1 --> L2["L2 Manifest — signed capability documents"]
+    L2 --> L3["L3 Semantics — tools · apps · agent threads"]
+```
+
 ## Documents
 
 | File                       | Status | Scope                                        |
@@ -46,10 +53,38 @@ in `awp-core` and `awp-sig` holds.
 
 ## Reference implementation
 
-`awpd` — single Go binary: serves the domain index, inbox, and hosted tools;
-runs portable entities on wazero; ships an `awp` CLI (`keys`, `publish`,
-`call`, `send`, `outbox`). First milestone: two instances completing a signed
-`message → reply → close` thread on localhost.
+`awpd` — single Go binary: serves the domain index and inbox, runs hosted
+tools, and executes portable (wasm32-wasip1) entities on
+[wazero](https://github.com/tetratelabs/wazero). `awp` is a small CLI for
+black-box conformance testing (`awp conformance <domain>`) and local outbox
+inspection (`awp outbox ls -dead`) — it is not how you send messages or call
+tools programmatically; that's `sdk/go`, a thin client for third-party Go
+programs to speak AWP directly (sign, send, call) without running a daemon.
+First milestone (tagged `v0.1.0-m1`): two instances completing a signed
+`message → ack → reply → close` thread on localhost — see
+`examples/agent-messaging` for exactly that, running.
+
+## Documentation
+
+| Doc | Covers |
+|---|---|
+| [`docs/getting-started.md`](docs/getting-started.md) | Build it, run the first two examples, narrated. |
+| [`docs/protocol-overview.md`](docs/protocol-overview.md) | The concepts — domains, manifests, sessions, delegation, envelopes — in plain English, linked to the normative spec. |
+| [`docs/agent-guide.md`](docs/agent-guide.md) | **For AI agents/agent builders**: what's safe to feed a model, tool discovery, delegation, and what it actually takes to be a callable agent, not just a caller. |
+| [`docs/architecture.md`](docs/architecture.md) | How the `internal/*` packages implement the protocol; system, process, and request-flow diagrams. |
+| [`docs/sdk-go.md`](docs/sdk-go.md) | The `sdk/go` client API reference. |
+| [`docs/cli-reference.md`](docs/cli-reference.md) | Every `awpd`/`awp` flag that actually exists. |
+| [`docs/deployment.md`](docs/deployment.md) | Running a real domain: TLS, QUIC, retention, a two-domain checklist. |
+
+## Examples
+
+Four self-contained, runnable programs under [`examples/`](examples) — no
+DNS, no real certificates, no setup beyond `go run`:
+[`hello-tool`](examples/hello-tool),
+[`stateful-tool-delegation`](examples/stateful-tool-delegation),
+[`agent-messaging`](examples/agent-messaging), and
+[`portable-wasm-tool`](examples/portable-wasm-tool). Start with
+[`examples/README.md`](examples/README.md).
 
 ## v0.2 backlog (deliberately out of scope for v0.1)
 
