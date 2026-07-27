@@ -54,11 +54,14 @@ sequenceDiagram
 3. `alice.daemon.Send` signs and enqueues a `message`; `RunOutboxOnce`
    delivers it over a real signed HTTPS POST to bob's `/awp/inbox`.
 4. `bob.daemon.ProcessInboundOnce` runs the reference default handler for
-   an inbound `message` (`internal/daemon.handleMessage`): send an `ack`,
-   then a `reply`. **A real agent plugs in its own logic here** — this
-   daemon has no application behavior of its own; acking and replying is
-   just how the reference implementation demonstrates the full envelope
-   vocabulary end to end.
+   an inbound `message` (`internal/daemon.defaultMessageHandler`, used
+   because `bob` didn't set `Config.MessageHandler`): send an `ack`, then
+   a `reply`. This daemon has no application behavior of its own;
+   acking and replying is just how the reference implementation
+   demonstrates the full envelope vocabulary end to end. **A real agent
+   sets `Config.MessageHandler` to its own logic instead** — see
+   [`../custom-message-handler`](../custom-message-handler) for exactly
+   that, side by side with this same wire setup.
 5. `drainOutbox` loops `RunOutboxOnce` until a tick delivers nothing. This
    isn't padding: `outbox.ProcessDue` deliberately starts at most one
    in-flight delivery per destination domain per call, so bob's `ack` and
@@ -73,6 +76,8 @@ sequenceDiagram
 
 ## Next
 
+- [`custom-message-handler`](../custom-message-handler) — replacing the
+  default handler used here with real logic.
 - [`hello-tool`](../hello-tool) and
   [`stateful-tool-delegation`](../stateful-tool-delegation) — the sync,
   request/response side of the protocol.

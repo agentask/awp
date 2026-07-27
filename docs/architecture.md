@@ -254,6 +254,7 @@ sequenceDiagram
     Note over D: httpsig.Verify: components → created window →<br/>digest → resolve key → signature →<br/>delegation (if any) → session (if any)
     D->>T: dispatch(caller, chain, input)
     T-->>D: output or {code, detail, retryable}
+    Note over D: on success: httpsig.SignResponse (awp-sig §3, SHOULD)
     D-->>C: {"output": ...} or {"error": ...}<br/>+ {"session": ...} on a provider tool's first call
 ```
 
@@ -277,6 +278,8 @@ internal/daemon.serveToolCall
   │    └─ if AWP-Session present: internal/session.Verify
   │  dispatch to the registered ToolHandler (native Go) or a wasmrt.Module
   │  if state:provider and no session was presented: session.Issue
+  │  on success: httpsig.SignResponse (awp-sig §3, SHOULD) — Caller
+  │  verifies this via httpsig.VerifyResponse before trusting the body
   ▼
 Response: {"output": ...} or {"error": {code, detail, retryable}}
 ```
@@ -361,9 +364,9 @@ Sender                                          Receiver
                                             5. durably enqueue               → 202 / 503
                                           ProcessInboundOnce (own schedule)
                                             record thread state (store.RecordThreadEnvelope)
-                                            if kind == "message": run handler
-                                              (reference default: send ack, then reply)
-                                            Send(...) for any response → back through the sender's own outbox
+                                            if kind == "message": run Config.MessageHandler
+                                              (default: send ack, then reply — see callout below)
+                                            send(...) for any response → back through the sender's own outbox
 ```
 
 **Why the gate's order is part of the contract, not an implementation
@@ -382,6 +385,20 @@ delegation chain length. `internal/inbox`'s own tests assert the order
 directly (a gate-order matrix), not just the individual status codes —
 getting the right code for the wrong reason is exactly the kind of bug
 that order-blind testing would miss.
+
+**Why `MessageHandler` gets a `send` closure instead of raw access to
+`Send`.** `Config.MessageHandler`'s third parameter is pre-bound to the
+inbound message's `to`/`thread`/`in_reply_to` — a handler only ever
+chooses `kind` and `body`. This isn't hiding capability for its own sake:
+every response to a `message` genuinely does belong to that message's
+thread, addressed back to its sender, so making that the only path
+available removes an entire class of bug (a handler that means to reply
+but fingers the wrong thread or the wrong recipient) rather than
+documenting "don't do that." The reference default
+(`defaultMessageHandler`, used when `Config.MessageHandler` is nil) is
+just this same closure called twice — see `examples/custom-message-handler`
+for a real handler and `examples/agent-messaging` for the default,
+side by side.
 
 **Why outbox delivery is per-domain-serial, not per-envelope-parallel.**
 `outbox.ProcessDue` starts at most one in-flight delivery per destination

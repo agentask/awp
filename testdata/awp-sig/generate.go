@@ -59,6 +59,28 @@ type vector struct {
 	Note             string      `json:"note,omitempty"`
 }
 
+// responseVector is the response counterpart to vector — a distinct shape
+// rather than overloading vector's request-only fields (method,
+// target_uri) with values that don't apply to a response.
+type responseVector struct {
+	Name           string      `json:"name"`
+	Description    string      `json:"description"`
+	Domain         string      `json:"domain"`
+	Kid            string      `json:"kid"`
+	PrivateKeySeed string      `json:"private_key_seed_b64url"`
+	PublicKey      string      `json:"public_key_b64url"`
+	Status         int         `json:"status"`
+	BodyB64        *string     `json:"body_b64url"`
+	Created        int64       `json:"created"`
+	VerifyAt       string      `json:"verify_at"`
+	SignatureInput string      `json:"signature_input"`
+	Signature      string      `json:"signature"`
+	ContentDigest  *string     `json:"content_digest,omitempty"`
+	SignatureBase  string      `json:"signature_base"`
+	Expect         expectation `json:"expect"`
+	Note           string      `json:"note,omitempty"`
+}
+
 type trustedKey struct {
 	Domain string `json:"domain"`
 	Kid    string `json:"kid"`
@@ -154,6 +176,38 @@ func selfCheck(name string, req *http.Request, body []byte, deps httpsig.Deps, n
 	}
 }
 
+// selfCheckResponse mirrors selfCheck for the response side (awp-sig §3):
+// re-verifies resp against this repo's own httpsig.VerifyResponse and
+// aborts generation on any mismatch from want. want.Status is unused here
+// (VerifyResponse has no HTTP status of its own to compare); only
+// want.Code matters, with "" meaning "expect no error."
+func selfCheckResponse(name string, resp *http.Response, body []byte, resolver httpsig.KeyResolver, now time.Time, want expectation) {
+	result := httpsig.VerifyResponse(resp, body, now, resolver)
+	gotCode := ""
+	if result.Err != nil {
+		gotCode = result.Err.Code
+	}
+	if gotCode != want.Code {
+		detail := ""
+		if result.Err != nil {
+			detail = result.Err.Detail
+		}
+		fatalf("self-check failed for %q: got code=%q (%s), want code=%q", name, gotCode, detail, want.Code)
+	}
+}
+
+func writeResponseVector(dir string, v responseVector) {
+	buf, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fatalf("marshal %s: %v", v.Name, err)
+	}
+	path := filepath.Join(dir, v.Name+".json")
+	if err := os.WriteFile(path, append(buf, '\n'), 0644); err != nil {
+		fatalf("write %s: %v", path, err)
+	}
+	fmt.Println("wrote", path)
+}
+
 func writeVector(dir string, v vector) {
 	buf, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -186,6 +240,8 @@ func main() {
 	genFailureStep5BadSignature(dir)
 	genFailureStep6DelegationInvalid(dir)
 	genFailureStep7SessionInvalid(dir)
+	genResponseSigned(dir)
+	genResponseTamperedSignature(dir)
 }
 
 func genBodylessGET(dir string) {
@@ -646,5 +702,102 @@ func genFailureStep7SessionInvalid(dir string) {
 		Created:      created.Unix(), VerifyAt: verifyAt.Format(time.RFC3339),
 		SignatureInput: sigInput, Signature: sig, ContentDigest: digest, SignatureBase: base,
 		Expect: want,
+	})
+}
+
+func genResponseSigned(dir string) {
+	const name = "response-signed"
+	pub, priv, seed := fixedKey(name)
+	domain, kid := "provider.example.com", "2026-07-01"
+	created := time.Unix(1753088043, 0).UTC()
+	verifyAt := created.Add(10 * time.Second)
+	body := []byte(`{"output":{"ok":true}}`)
+
+	resp := &http.Response{StatusCode: 200, Header: http.Header{}}
+	if err := httpsig.SignResponse(resp, body, priv, domain+"/"+kid, created); err != nil {
+		fatalf("SignResponse: %v", err)
+	}
+	sigInput := resp.Header.Get("Signature-Input")
+	sig := resp.Header.Get("Signature")
+	var digest *string
+	if d := resp.Header.Get("Content-Digest"); d != "" {
+		digest = &d
+	}
+	parsed, err := httpsig.ParseSignatureInput(sigInput)
+	if err != nil {
+		fatalf("re-parse own Signature-Input: %v", err)
+	}
+	base, err := httpsig.ResponseSignatureBase(resp, parsed.Params)
+	if err != nil {
+		fatalf("reconstruct response signature base: %v", err)
+	}
+	selfCheckResponse(name, resp, body, staticResolver{domain, kid, pub}, verifyAt, expectation{Status: 0})
+
+	bodyB64 := b64(body)
+	writeResponseVector(dir, responseVector{
+		Name:        name,
+		Description: "A provider's successfully-signed sync response (awp-sig §3, SHOULD): @status and content-digest covered.",
+		Domain:      domain, Kid: kid, PrivateKeySeed: seed, PublicKey: b64(pub),
+		Status: 200, BodyB64: &bodyB64,
+		Created: created.Unix(), VerifyAt: verifyAt.Format(time.RFC3339),
+		SignatureInput: sigInput, Signature: sig, ContentDigest: digest, SignatureBase: base,
+		Expect: expectation{Status: 0},
+	})
+}
+
+func genResponseTamperedSignature(dir string) {
+	const name = "response-tampered-signature"
+	pub, priv, seed := fixedKey(name)
+	domain, kid := "provider.example.com", "2026-07-01"
+	created := time.Unix(1753088043, 0).UTC()
+	verifyAt := created.Add(10 * time.Second)
+	body := []byte(`{"output":{"ok":true}}`)
+
+	resp := &http.Response{StatusCode: 200, Header: http.Header{}}
+	if err := httpsig.SignResponse(resp, body, priv, domain+"/"+kid, created); err != nil {
+		fatalf("SignResponse: %v", err)
+	}
+	sigInput := resp.Header.Get("Signature-Input")
+	var digest *string
+	if d := resp.Header.Get("Content-Digest"); d != "" {
+		digest = &d
+	}
+	parsed, err := httpsig.ParseSignatureInput(sigInput)
+	if err != nil {
+		fatalf("re-parse own Signature-Input: %v", err)
+	}
+	base, err := httpsig.ResponseSignatureBase(resp, parsed.Params)
+	if err != nil {
+		fatalf("reconstruct response signature base: %v", err)
+	}
+
+	// Corrupt the signature AFTER capturing what was genuinely signed
+	// above — same convention as failure-step5-bad-signature: the vector
+	// records the real signature_base, but a tampered signature value.
+	sigB64, err := httpsig.ParseSignature(resp.Header.Get("Signature"))
+	if err != nil {
+		fatalf("parse own signature: %v", err)
+	}
+	rawSig, err := base64.RawURLEncoding.DecodeString(sigB64)
+	if err != nil {
+		fatalf("decode own signature: %v", err)
+	}
+	rawSig[0] ^= 0xFF
+	tamperedSig := httpsig.Label + "=:" + base64.RawURLEncoding.EncodeToString(rawSig) + ":"
+	resp.Header.Set("Signature", tamperedSig)
+
+	want := expectation{Status: 401, Code: apperr.CodeUnauthorized}
+	selfCheckResponse(name, resp, body, staticResolver{domain, kid, pub}, verifyAt, want)
+
+	bodyB64 := b64(body)
+	writeResponseVector(dir, responseVector{
+		Name:        name,
+		Description: "A sync response's Signature is present but does not verify — awp-sig §3: a present-but-invalid response signature MUST be treated as an error (an absent one would not be).",
+		Domain:      domain, Kid: kid, PrivateKeySeed: seed, PublicKey: b64(pub),
+		Status: 200, BodyB64: &bodyB64,
+		Created: created.Unix(), VerifyAt: verifyAt.Format(time.RFC3339),
+		SignatureInput: sigInput, Signature: tamperedSig, ContentDigest: digest, SignatureBase: base,
+		Expect: want,
+		Note:   "signature_base above is what was GENUINELY signed; signature in this vector is deliberately corrupted afterward.",
 	})
 }

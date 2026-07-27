@@ -1,0 +1,21 @@
+{
+  "name": "response-tampered-signature",
+  "description": "A sync response's Signature is present but does not verify — awp-sig §3: a present-but-invalid response signature MUST be treated as an error (an absent one would not be).",
+  "domain": "provider.example.com",
+  "kid": "2026-07-01",
+  "private_key_seed_b64url": "JD_bTDDOslqdatHuWVpFr7QXlscTttcZDBqsRNJOcFg",
+  "public_key_b64url": "yeM6vhBhwSMwk6YwfURMW3_r74giYYY1i4Kjl99YpIE",
+  "status": 200,
+  "body_b64url": "eyJvdXRwdXQiOnsib2siOnRydWV9fQ",
+  "created": 1753088043,
+  "verify_at": "2025-07-21T08:54:13Z",
+  "signature_input": "awp=(\"@status\" \"content-digest\");created=1753088043;keyid=\"provider.example.com/2026-07-01\";alg=\"ed25519\"",
+  "signature": "awp=:ZAYUxOha_PRGB7i6Izb99xFWhIik841bYlC_uG2mLjQst2AZG-Z0B_-l0oWLaaL3zB55846I8BKvzpaH-BLOAA:",
+  "content_digest": "sha-256=:59/X60OFTwC/ujfDZorCmyrsmns9IoCspiKTyyAKVEY=:",
+  "signature_base": "\"@status\": 200\n\"content-digest\": sha-256=:59/X60OFTwC/ujfDZorCmyrsmns9IoCspiKTyyAKVEY=:\n\"@signature-params\": (\"@status\" \"content-digest\");created=1753088043;keyid=\"provider.example.com/2026-07-01\";alg=\"ed25519\"",
+  "expect": {
+    "status": 401,
+    "code": "unauthorized"
+  },
+  "note": "signature_base above is what was GENUINELY signed; signature in this vector is deliberately corrupted afterward."
+}

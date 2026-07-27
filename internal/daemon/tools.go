@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -194,6 +195,17 @@ func (d *Daemon) serveToolCall(w http.ResponseWriter, r *http.Request) {
 		writeSyncError(w, 500, apperr.CodeInternal, "marshal response: "+err.Error())
 		return
 	}
+
+	// awp-sig §3 SHOULD: sign successful responses. Built via a throwaway
+	// *http.Response so httpsig.SignResponse's existing digest/signature
+	// construction can be reused as-is, then copied onto the real
+	// ResponseWriter's headers before they're sent.
+	signed := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}}
+	if err := httpsig.SignResponse(signed, buf, d.priv, d.Domain+"/"+d.Kid, d.Clock.Now()); err != nil {
+		writeSyncError(w, 500, apperr.CodeInternal, "sign response: "+err.Error())
+		return
+	}
+	maps.Copy(w.Header(), signed.Header)
 	w.Header().Set("Content-Type", "application/awp+json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf)

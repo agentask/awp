@@ -87,11 +87,10 @@ disable it, only to size the two things it collects:
   independently configurable; raise the TTLs you accept if you need a
   longer replay-defense window.
 - **Dead-lettered outbound records** are deleted after
-  `Config.DeadRetention` (`awpd-outbox-v0.1.md` §3's
-  `outbox.dead_retention`, defaulting to 720h / 30 days). There's no CLI
-  flag for this yet — set `daemon.Config.DeadRetention` if you're
-  embedding `internal/daemon` directly rather than running the `awpd`
-  binary as-is; the binary always uses the 720h default.
+  `-dead-retention` (`awpd-outbox-v0.1.md` §3's `outbox.dead_retention`,
+  defaulting to 720h / 30 days). Embedding `internal/daemon` directly
+  instead of running the `awpd` binary sets the same value via
+  `Config.DeadRetention`.
 
 Inspect what's currently dead-lettered at any time, without stopping the
 daemon:
@@ -135,12 +134,15 @@ Everything `examples/agent-messaging` does in-process, for real:
 - **No horizontal scaling story.** One `awpd` process owns one bbolt
   file for one domain. Running more than one instance for the same
   domain against the same data directory is not supported.
-- **No message-handling customization via flags.** The reference
-  handler for an inbound `message` always acks then replies with a fixed
-  body (`internal/daemon.handleMessage`) — real application logic means
-  embedding `internal/daemon` (or the lower-level `internal/inbox` gate)
-  in your own program rather than running the `awpd` binary unmodified.
-  `examples/agent-messaging`'s doc comment says exactly this.
+- **No message-handling customization via flags.** `internal/daemon.Config.MessageHandler`
+  is a real Go function value — there's no way to hand one over on the
+  command line, so real application logic still means embedding
+  `internal/daemon` as a library in your own program rather than running
+  the `awpd` binary unmodified. The `awpd` binary itself always uses the
+  reference default (ack, then a fixed reply). See
+  `examples/custom-message-handler` for what setting `MessageHandler`
+  actually looks like, and `docs/agent-guide.md`'s "being called"
+  section for when you need to.
 
 ## Where to go next
 

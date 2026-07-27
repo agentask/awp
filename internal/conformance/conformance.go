@@ -1,6 +1,8 @@
 // Package conformance implements `awp conformance <domain>`: the core §5
 // and awp-quic §8 checklists run as black-box probes against any AWP
-// implementation reachable over the network.
+// implementation reachable over the network, plus one check beyond either
+// checklist (awp-sig §3 response signing — see sync_sig.go's doc comment
+// for why).
 //
 // Scope note (flagged, not silently assumed): two core §5 items — "emits
 // error envelopes for unknown body types" and "enforces the two-party
@@ -130,6 +132,8 @@ func Run(ctx context.Context, domain string, opts Options) Report {
 	for _, result := range runQUICChecks(ctx, domain, idx, opts) {
 		add(result)
 	}
+	// Beyond the two named checklists (see sync_sig.go's doc comment).
+	add(checkResponseSigning(ctx, opts, idx))
 	return report
 }
 

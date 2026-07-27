@@ -78,11 +78,12 @@ First milestone (tagged `v0.1.0-m1`): two instances completing a signed
 
 ## Examples
 
-Four self-contained, runnable programs under [`examples/`](examples) — no
+Five self-contained, runnable programs under [`examples/`](examples) — no
 DNS, no real certificates, no setup beyond `go run`:
 [`hello-tool`](examples/hello-tool),
 [`stateful-tool-delegation`](examples/stateful-tool-delegation),
-[`agent-messaging`](examples/agent-messaging), and
+[`agent-messaging`](examples/agent-messaging),
+[`custom-message-handler`](examples/custom-message-handler), and
 [`portable-wasm-tool`](examples/portable-wasm-tool). Start with
 [`examples/README.md`](examples/README.md).
 

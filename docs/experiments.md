@@ -892,3 +892,90 @@ Phase 5's Skip-only checklist items above:
    pass changed the structural fact that a black-box CLI prober has no
    spec-defined API to observe internal processing/state — these remain
    Skip with a checked-in reason, not a fabricated Pass.
+
+## Documentation, examples, and a second gap round
+
+Two follow-on rounds after the gap-closure pass above, requested directly
+rather than self-identified: comprehensive docs + runnable examples, then
+a second pass closing the small set of gaps that surfaced while writing
+them.
+
+### `docs/` and `examples/`
+
+Seven docs (`getting-started`, `protocol-overview`, `architecture`,
+`sdk-go`, `cli-reference`, `deployment`, and `agent-guide` — the last
+specifically for AI-agent builders: the authn-vs-content-trust boundary,
+tool discovery, delegation, and the caller-only-vs-full-participant
+split) and five runnable programs under `examples/` (`hello-tool`,
+`stateful-tool-delegation`, `agent-messaging`, `custom-message-handler`,
+`portable-wasm-tool`), each with its own README and at least one Mermaid
+diagram. `README.md` got a typo fix and a real correction: it had claimed
+an `awp` CLI with `keys`/`publish`/`call`/`send` subcommands that were
+never built — only `conformance` and `outbox ls` exist; programmatic
+send/call/delegate is `sdk/go`.
+
+Two SDK/library gaps surfaced directly from writing these, not from
+review:
+
+- **`sdk/go.Client.FetchManifest`** — didn't exist; needed by
+  `examples/portable-wasm-tool` to fetch and pin-verify a manifest
+  without making a sync call against it (the only way to reach a
+  `distribution.portable` tool, which has no callable endpoint at all).
+- **`internal/httpsig.VerifyResponse`** — `SignResponse` existed since
+  Phase 5 with no verifier and no real consumer; added so the SDK's
+  response check (used by `CallTool`) is real, not decorative.
+
+### Second gap round
+
+Six items, tackled from a status report the user asked for after the
+docs/examples work:
+
+1. **`internal/daemon.Config.MessageHandler`** — the most consequential.
+   `handleMessage` was hardcoded (ack, then a fixed reply) with no
+   extension point at all; `docs/agent-guide.md`'s "being called" section
+   told agent builders to "embed `internal/daemon`, replacing its
+   message-handling," which was impossible without editing the package's
+   own source. Added `Config.MessageHandler` (a
+   `func(ctx, env, send) error`, `send` pre-bound to the inbound
+   message's `to`/`thread`/`in_reply_to`), moved the old behavior into
+   `defaultMessageHandler` used when unset. `examples/custom-message-handler`
+   demonstrates it end to end, next to `agent-messaging`'s default.
+2. **`internal/outbox.HTTPSender`: HTTP-date `Retry-After`.** Only the
+   delta-seconds form was handled since Phase 3. Added a `Clock` field
+   (needed to convert an absolute HTTP-date into the relative
+   `time.Duration` `Sender.Send` returns; no `Sender` interface change)
+   and `parseRetryAfter`, trying delta-seconds first, then
+   `http.ParseTime`, clamping a past date to zero rather than a negative
+   duration.
+3. **`cmd/awpd -dead-retention`.** `daemon.Config.DeadRetention` existed;
+   nothing exposed it. Mechanical flag addition.
+4. **Response-signing conformance + testdata vector.** Added
+   `awp-sig-3-response-signing` to `internal/conformance` — deliberately
+   outside the core §5/awp-quic §8 checklists (there's no checklist item
+   for a SHOULD with no checklist entry), Skip-gated on having a caller
+   key and a discoverable `kind:tool` entity, `Fail` only on
+   present-but-invalid, never on absent. Writing this surfaced that
+   **`internal/daemon.serveToolCall` never actually called
+   `httpsig.SignResponse`** — the reference daemon would have always
+   reported Skip against its own tools, and `sdk/go`'s response
+   verification (added in the docs/examples round) had never once
+   verified a real signed response in this repo's own test suite. Fixed:
+   `serveToolCall` now signs every successful response. Also added
+   `response-signed`/`response-tampered-signature` to
+   `testdata/awp-sig/` (required adding `httpsig.ResponseSignatureBase`,
+   the response counterpart to the existing `RequestSignatureBase`
+   tooling export) and taught `TestConformanceVectors` to tell request
+   vectors from response vectors apart (a response vector has no
+   `method` key at all — that absence is the discriminator) rather than
+   assuming every fixture is request-shaped.
+5. **Tag `v0.1.0-m1`.** Never tagged despite CLAUDE.md's convention.
+   Phases 1–5 landed in one commit (`8eed89c`), not incrementally, so
+   there was no earlier commit to tag more precisely — tagged there
+   retroactively, annotated with what the milestone actually required.
+6. **This entry**, plus fixing the specific sentences in
+   `docs/agent-guide.md` and `docs/deployment.md`/`docs/cli-reference.md`
+   that described the gaps closed above as still open.
+
+Gate: `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./... -race
+-count=1` all green; all five `examples/` re-run and matched their
+documented output.

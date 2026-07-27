@@ -65,6 +65,16 @@ func RequestSignatureBase(req *http.Request, params Params) (string, error) {
 	}, params.serializeValue())
 }
 
+// ResponseSignatureBase reconstructs the signature base for resp given
+// params, without performing any signing/verification — the response
+// counterpart to RequestSignatureBase, for the same tooling reasons (e.g.
+// generating testdata/awp-sig/ response-signing vectors).
+func ResponseSignatureBase(resp *http.Response, params Params) (string, error) {
+	return signatureBase(params.Components, func(c string) (string, bool) {
+		return responseComponentValue(resp, c)
+	}, params.serializeValue())
+}
+
 // requestComponentValue resolves a covered component's value from a
 // request: derived components (@method, @target-uri) or a header field.
 func requestComponentValue(req *http.Request, component string) (string, bool) {

@@ -31,6 +31,7 @@ works for a local run.
 | `-quic-addr` | *(unset)* | `awp/1` (QUIC) listen address. Empty disables QUIC entirely and the daemon advertises HTTPS-only, which is always spec-compliant (`awp-quic-v0.1.md` §2). |
 | `-quic-dial-timeout` | `5s` | Timeout dialing a peer's `awp/1` endpoint before falling back to HTTPS. |
 | `-demo-echo-tool` | `false` | Register a demo `kind:tool` entity (`#echo`) that returns its verified caller + input, for trying out sync tool calls without writing any code. Not registered by default. |
+| `-dead-retention` | `720h` | How long dead-lettered outbound envelopes are kept before hourly GC deletes them (`awpd-outbox-v0.1.md` §3 `outbox.dead_retention`). |
 
 **Identity.** On first run, `awpd` generates an Ed25519 keypair and
 persists it PEM-encoded at `{data}/identity.pem`; subsequent runs reuse

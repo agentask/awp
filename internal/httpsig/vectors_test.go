@@ -42,6 +42,26 @@ type vectorTrustedKey struct {
 	PubKey string `json:"pub_b64url"`
 }
 
+// responseVectorFile mirrors generate.go's responseVector — the response
+// counterpart to vectorFile, for the same "re-parse independently" reason.
+// Response vectors have no "method" key at all, which is exactly how
+// TestConformanceVectors tells the two shapes apart.
+type responseVectorFile struct {
+	Domain         string  `json:"domain"`
+	Kid            string  `json:"kid"`
+	PublicKeyB64   string  `json:"public_key_b64url"`
+	Status         int     `json:"status"`
+	BodyB64        *string `json:"body_b64url"`
+	VerifyAt       string  `json:"verify_at"`
+	SignatureInput string  `json:"signature_input"`
+	Signature      string  `json:"signature"`
+	ContentDigest  *string `json:"content_digest,omitempty"`
+	Expect         struct {
+		Status int    `json:"status"`
+		Code   string `json:"code,omitempty"`
+	} `json:"expect"`
+}
+
 // vectorKeyResolver resolves the request's own signer plus any additional
 // TrustedKeys a vector declares (e.g. a delegation chain's root signer).
 type vectorKeyResolver struct {
@@ -79,6 +99,22 @@ func TestConformanceVectors(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
 			if err != nil {
 				t.Fatalf("read: %v", err)
+			}
+			// Request vectors always carry a "method"; response vectors
+			// (awp-sig §3) never do — that absence is the discriminator.
+			var probe struct {
+				Method string `json:"method"`
+			}
+			if err := json.Unmarshal(raw, &probe); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if probe.Method == "" {
+				var v responseVectorFile
+				if err := json.Unmarshal(raw, &v); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+				runResponseVector(t, v)
+				return
 			}
 			var v vectorFile
 			if err := json.Unmarshal(raw, &v); err != nil {
@@ -163,5 +199,58 @@ func runVector(t *testing.T, v vectorFile) {
 		if result.Err == nil || result.Err.Code != v.Expect.Code {
 			t.Fatalf("code = %v, want %q", result.Err, v.Expect.Code)
 		}
+	}
+}
+
+// runResponseVector is runVector's counterpart for awp-sig §3 response
+// vectors, replaying them through VerifyResponse instead of Verify.
+func runResponseVector(t *testing.T, v responseVectorFile) {
+	t.Helper()
+
+	var body []byte
+	if v.BodyB64 != nil {
+		b, err := base64.RawURLEncoding.DecodeString(*v.BodyB64)
+		if err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		body = b
+	}
+
+	resp := &http.Response{StatusCode: v.Status, Header: http.Header{}}
+	if v.SignatureInput != "" {
+		resp.Header.Set("Signature-Input", v.SignatureInput)
+	}
+	if v.Signature != "" {
+		resp.Header.Set("Signature", v.Signature)
+	}
+	if v.ContentDigest != nil {
+		resp.Header.Set("Content-Digest", *v.ContentDigest)
+	}
+
+	verifyAt, err := time.Parse(time.RFC3339, v.VerifyAt)
+	if err != nil {
+		t.Fatalf("parse verify_at: %v", err)
+	}
+
+	keys := map[string]ed25519.PublicKey{}
+	if v.PublicKeyB64 != "" {
+		p, err := base64.RawURLEncoding.DecodeString(v.PublicKeyB64)
+		if err != nil {
+			t.Fatalf("decode public key: %v", err)
+		}
+		keys[v.Domain+"/"+v.Kid] = ed25519.PublicKey(p)
+	}
+
+	result := VerifyResponse(resp, body, verifyAt, vectorKeyResolver{keys: keys})
+	gotCode := ""
+	if result.Err != nil {
+		gotCode = result.Err.Code
+	}
+	if gotCode != v.Expect.Code {
+		detail := ""
+		if result.Err != nil {
+			detail = result.Err.Detail
+		}
+		t.Fatalf("code = %q (%s), want %q", gotCode, detail, v.Expect.Code)
 	}
 }

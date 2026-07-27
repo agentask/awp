@@ -1,7 +1,8 @@
 // Package daemon wires internal/store, internal/inbox, internal/outbox,
 // and internal/keyresolver into the reference `awpd` behavior: serve a
 // signed domain index, accept envelopes, process them (thread bookkeeping
-// plus a minimal default message handler), and deliver outbound envelopes.
+// plus a message handler — a minimal ack-then-reply default, or your own
+// via Config.MessageHandler), and deliver outbound envelopes.
 package daemon
 
 import (
@@ -88,7 +89,24 @@ type Config struct {
 	// before RunGCOnce deletes them (awpd-outbox §3 `outbox.dead_retention`).
 	// 0 uses the spec default (720h).
 	DeadRetention time.Duration
+	// MessageHandler processes each inbound `message` envelope. nil uses
+	// defaultMessageHandler (ack, then a fixed reply) — the reference
+	// behavior that demonstrates the envelope-kind vocabulary end to end.
+	// A real agent sets this to its own logic; see docs/agent-guide.md.
+	MessageHandler MessageHandler
 }
+
+// SendFunc sends one envelope in response to whatever inbound `message` a
+// MessageHandler is currently processing. to/thread/in_reply_to are
+// pre-bound to that message — the handler only chooses kind and body.
+type SendFunc func(kind string, body json.RawMessage) (*envelope.Envelope, error)
+
+// MessageHandler processes one inbound `message` envelope, using send to
+// respond (zero, one, or several times — e.g. an `ack` immediately,
+// followed by a `reply` once real work finishes). Returning an error
+// surfaces it from ProcessInboundOnce but does not stop the queue from
+// draining; one bad message must not stall the rest.
+type MessageHandler func(ctx context.Context, env *envelope.Envelope, send SendFunc) error
 
 // DefaultDeadRetention is awpd-outbox-v0.1.md §3's `outbox.dead_retention`
 // default.
@@ -100,15 +118,16 @@ const DefaultDeadRetention = 720 * time.Hour
 // QUIC is enabled, ServeQUIC must also be run by the caller (mirroring how
 // the caller also runs the http.Server for the HTTP side).
 type Daemon struct {
-	Domain        string
-	Kid           string
-	priv          ed25519.PrivateKey
-	Store         *store.Store
-	Clock         clock.Clock
-	Gate          *inbox.Gate
-	Sender        outbox.Sender
-	OutboxCfg     outbox.Config
-	DeadRetention time.Duration
+	Domain         string
+	Kid            string
+	priv           ed25519.PrivateKey
+	Store          *store.Store
+	Clock          clock.Clock
+	Gate           *inbox.Gate
+	Sender         outbox.Sender
+	OutboxCfg      outbox.Config
+	DeadRetention  time.Duration
+	MessageHandler MessageHandler
 
 	mu    sync.Mutex
 	index *identity.Index
@@ -153,6 +172,7 @@ func New(cfg Config) (*Daemon, error) {
 	var sender outbox.Sender = &outbox.HTTPSender{
 		Client:   cfg.HTTP,
 		InboxURL: cfg.Resolver.ResolveInbox,
+		Clock:    cfg.Clock,
 	}
 
 	outboxCfg := cfg.OutboxCfg
@@ -165,15 +185,16 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		Domain:        cfg.Domain,
-		Kid:           cfg.Kid,
-		priv:          cfg.Priv,
-		Store:         cfg.Store,
-		Clock:         cfg.Clock,
-		Gate:          gate,
-		OutboxCfg:     outboxCfg,
-		DeadRetention: deadRetention,
-		index:         idx,
+		Domain:         cfg.Domain,
+		Kid:            cfg.Kid,
+		priv:           cfg.Priv,
+		Store:          cfg.Store,
+		Clock:          cfg.Clock,
+		Gate:           gate,
+		OutboxCfg:      outboxCfg,
+		DeadRetention:  deadRetention,
+		MessageHandler: cfg.MessageHandler,
+		index:          idx,
 	}
 
 	if cfg.QUIC != nil {
@@ -332,11 +353,11 @@ func (d *Daemon) RunGCOnce() (seenDeleted, deadDeleted int, err error) {
 }
 
 // ProcessInboundOnce claims and processes every currently-queued inbound
-// envelope: records thread state and, for `message` envelopes, runs the
-// default reference behavior (ack, then reply). Returns the number of
-// envelopes processed and the first processing error encountered, if any
-// (processing continues past errors — one bad envelope must not stall the
-// queue).
+// envelope: records thread state and, for `message` envelopes, runs
+// Config.MessageHandler (or the ack-then-reply default when unset).
+// Returns the number of envelopes processed and the first processing
+// error encountered, if any (processing continues past errors — one bad
+// envelope must not stall the queue).
 func (d *Daemon) ProcessInboundOnce(ctx context.Context) (int, error) {
 	claimed, err := d.Store.ClaimInbound(100)
 	if err != nil {
@@ -375,21 +396,29 @@ func (d *Daemon) processOne(ctx context.Context, rec store.InboundRecord) error 
 	if env.Kind != "message" {
 		return nil
 	}
-	return d.handleMessage(ctx, &env)
+	handler := d.MessageHandler
+	if handler == nil {
+		handler = defaultMessageHandler
+	}
+	send := func(kind string, body json.RawMessage) (*envelope.Envelope, error) {
+		return d.Send(kind, env.From, env.Thread, &env.ID, body)
+	}
+	return handler(ctx, &env, send)
 }
 
-// handleMessage is the reference default behavior for an inbound `message`:
-// send an `ack`, then a `reply`. A real application would plug in its own
-// handler here; this daemon has no business logic of its own to run, so it
-// demonstrates the full envelope-kind vocabulary instead.
-func (d *Daemon) handleMessage(_ context.Context, env *envelope.Envelope) error {
+// defaultMessageHandler is the reference behavior for an inbound `message`
+// when Config.MessageHandler is unset: send an `ack`, then a `reply`. This
+// daemon has no business logic of its own to run, so it demonstrates the
+// full envelope-kind vocabulary instead — a real agent sets
+// Config.MessageHandler to its own logic (see docs/agent-guide.md).
+func defaultMessageHandler(_ context.Context, env *envelope.Envelope, send SendFunc) error {
 	ackBody := json.RawMessage(`{"type":"data","schema":null,"data":{}}`)
-	if _, err := d.Send("ack", env.From, env.Thread, &env.ID, ackBody); err != nil {
+	if _, err := send("ack", ackBody); err != nil {
 		return fmt.Errorf("daemon: send ack for %s: %w", env.ID, err)
 	}
 
 	replyBody := json.RawMessage(`{"type":"text","text":"received"}`)
-	if _, err := d.Send("reply", env.From, env.Thread, &env.ID, replyBody); err != nil {
+	if _, err := send("reply", replyBody); err != nil {
 		return fmt.Errorf("daemon: send reply for %s: %w", env.ID, err)
 	}
 	return nil

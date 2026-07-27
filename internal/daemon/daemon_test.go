@@ -173,6 +173,68 @@ func TestProcessInboundOnce_MessageTriggersAckThenReply(t *testing.T) {
 	}
 }
 
+func TestProcessInboundOnce_CustomMessageHandlerReplacesDefault(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "b.example.com.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	var gotEnv *envelope.Envelope
+	handler := func(_ context.Context, env *envelope.Envelope, send SendFunc) error {
+		gotEnv = env
+		_, err := send("reply", json.RawMessage(`{"type":"text","text":"custom handled"}`))
+		return err
+	}
+
+	d, err := New(Config{
+		Domain: "b.example.com", Kid: "k1", Priv: priv, Store: st,
+		Clock: clock.NewFixed(now), Resolver: noopResolver{}, MessageHandler: handler,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	thread := envelope.NewID()
+	msg := injectInbound(t, d, "a.example.com", "message", thread, nil, json.RawMessage(`{"type":"text","text":"hi"}`), now)
+
+	n, err := d.ProcessInboundOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessInboundOnce: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 processed, got %d", n)
+	}
+	if gotEnv == nil || gotEnv.ID != msg.ID {
+		t.Fatalf("expected the custom handler to be invoked with the inbound message, got %+v", gotEnv)
+	}
+
+	due, err := d.Store.DueForDelivery(now, 10)
+	if err != nil {
+		t.Fatalf("DueForDelivery: %v", err)
+	}
+	// Exactly the custom handler's one send — no default ack additionally
+	// enqueued alongside it.
+	if len(due) != 1 {
+		t.Fatalf("expected exactly 1 outbound envelope from the custom handler, got %d", len(due))
+	}
+	var e envelope.Envelope
+	if err := json.Unmarshal(due[0].Envelope, &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if e.Kind != "reply" || string(e.Body) != `{"type":"text","text":"custom handled"}` {
+		t.Fatalf("unexpected envelope from custom handler: %+v", e)
+	}
+	if e.To != "a.example.com" || e.Thread != thread || e.InReplyTo == nil || *e.InReplyTo != msg.ID {
+		t.Fatalf("expected send() to pre-bind to/thread/in_reply_to from the inbound message, got %+v", e)
+	}
+}
+
 func TestProcessInboundOnce_NonMessageKindsRecordButDoNotAutoRespond(t *testing.T) {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	d := newUnitTestDaemon(t, "a.example.com", clock.NewFixed(now))

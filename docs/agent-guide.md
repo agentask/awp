@@ -250,29 +250,46 @@ to inbound envelopes as they arrive instead of on a fixed schedule.
 ## Being called: what a real message handler looks like
 
 If your agent publishes itself as `kind: agent`, something has to decide
-what happens when a `message` lands. `internal/daemon` doesn't expose a
-pluggable hook for this today — its handler is fixed (ack, then a
-canned reply), which is fine for demonstrating the wire format and not
-fine for an actual agent. Embedding it means running your own process
-that:
+what happens when a `message` lands. `internal/daemon.Config.MessageHandler`
+is exactly that hook — set it and it replaces the fixed reference
+default (ack, then a canned reply), which exists only to demonstrate the
+wire format:
 
-1. Wires `internal/inbox.Gate` (or the whole `internal/daemon.Daemon`)
-   behind your own HTTP(S)/QUIC listener — this part is identical to
-   `cmd/awpd`.
-2. Replaces the fixed `handleMessage` step with your own: parse the
-   envelope `body` (**framed as untrusted before it reaches your
-   model**), decide what it means for whatever task/thread it belongs
-   to, and call `Send` for whatever response (`reply`, `ack`, `error`,
-   or nothing yet if the task needs more time — `ack` exists
-   specifically for "seen, working," core §2.4) your agent's reasoning
-   produces.
-3. Still runs the same outbox delivery and GC loops `cmd/awpd` runs —
-   nothing about custom message handling changes the delivery
-   guarantees or retention story in `docs/deployment.md`.
+```go
+d, err := daemon.New(daemon.Config{
+    // ...Domain, Kid, Priv, Store, Clock, Resolver...
+    MessageHandler: func(ctx context.Context, env *envelope.Envelope, send daemon.SendFunc) error {
+        // env.Body is framed as untrusted before it reaches your model —
+        // see "the one rule that matters most," above. Decide what it
+        // means for whatever task/thread it belongs to, then respond
+        // however your agent's reasoning concludes: `send` is already
+        // addressed back to the right thread, so you only choose kind
+        // and body — reply, ack, error, several of each in sequence, or
+        // nothing yet if the task needs more time (`ack` exists
+        // specifically for "seen, working," core §2.4).
+        answer, err := yourAgentLogic(ctx, env.Body)
+        if err != nil {
+            _, sendErr := send("error", errorBody(err))
+            return sendErr
+        }
+        _, sendErr := send("reply", answer)
+        return sendErr
+    },
+})
+```
 
-This is real engineering effort beyond "call `sdk/go`" — which is
-exactly why the caller-only branch above exists. Don't build a
-receiving agent until your design actually needs one.
+Everything else about running a full participant is unchanged: this
+still runs behind the same HTTP(S)/QUIC listener and the same outbox
+delivery and GC loops `cmd/awpd` runs — nothing about a custom handler
+changes the delivery guarantees or retention story in
+`docs/deployment.md`. `examples/custom-message-handler` is this exact
+pattern, end to end, next to `examples/agent-messaging`'s default for
+comparison.
+
+This is still real engineering effort beyond "call `sdk/go`" — the
+handler is *where* your agent's reasoning lives, not a replacement for
+writing it. That's exactly why the caller-only branch above exists:
+don't build a receiving agent until your design actually needs one.
 
 ## Where to go next
 
@@ -281,6 +298,4 @@ receiving agent until your design actually needs one.
   session, and thread mechanics this doc assumes.
 - [`docs/architecture.md`](architecture.md) — what "embedding
   `internal/daemon`" actually wires together, if you're past caller-only.
-- `examples/` — every pattern above except "being called with real
-  logic," which is a gap in this reference implementation, not just this
-  doc (see "Being called," above).
+- `examples/` — every pattern above, `custom-message-handler` included.

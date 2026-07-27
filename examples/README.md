@@ -1,6 +1,6 @@
 # AWP examples
 
-Four self-contained, runnable programs, each `go run ./examples/<name>`
+Five self-contained, runnable programs, each `go run ./examples/<name>`
 with no setup — no DNS, no real certificates, no other terminal window.
 Every daemon they start is a real `internal/daemon.Daemon` (the type
 `cmd/awpd` wraps) behind a real local TLS listener; nothing here is a
@@ -16,13 +16,15 @@ the last:
 | [`hello-tool`](hello-tool) | The smallest complete exchange: a stateless sync tool, called via `sdk/go`. |
 | [`stateful-tool-delegation`](stateful-tool-delegation) | Session lifecycle (`state: provider`) and delegation (acting on someone else's behalf). |
 | [`agent-messaging`](agent-messaging) | The async side: two independent domains, signed envelopes, `message → ack → reply → close`. |
+| [`custom-message-handler`](custom-message-handler) | Replacing the reference daemon's ack-then-reply default with your own logic — what it takes to be a real agent, not just a wire-format demo. |
 | [`portable-wasm-tool`](portable-wasm-tool) | The other tool distribution path: fetch a manifest, download a pinned wasm binary, run it locally — no network call per invocation. |
 
 ```mermaid
 flowchart LR
     H["hello-tool<br/>sync call"] --> S["stateful-tool-delegation<br/>+ sessions + delegation"]
     S --> A["agent-messaging<br/>async envelopes, real HTTP resolution"]
-    A --> P["portable-wasm-tool<br/>fetch + run locally, no per-call network"]
+    A --> C["custom-message-handler<br/>real logic instead of the default handler"]
+    C --> P["portable-wasm-tool<br/>fetch + run locally, no per-call network"]
 ```
 
 ## What's real, what's substituted

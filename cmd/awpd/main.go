@@ -48,6 +48,7 @@ type runConfig struct {
 	quicAddr                   string
 	quicDialTimeout            time.Duration
 	demoEchoTool               bool
+	deadRetention              time.Duration
 }
 
 func main() {
@@ -64,6 +65,7 @@ func main() {
 	flag.StringVar(&cfg.quicAddr, "quic-addr", "", "awp/1 (QUIC) listen address; empty disables QUIC and advertises HTTPS-only, per awp-quic §2")
 	flag.DurationVar(&cfg.quicDialTimeout, "quic-dial-timeout", 5*time.Second, "timeout dialing a peer's awp/1 endpoint before falling back to HTTPS")
 	flag.BoolVar(&cfg.demoEchoTool, "demo-echo-tool", false, "register a demo kind:tool entity (\"echo\") that returns its verified caller + input — for trying out sync tool calls; not registered by default")
+	flag.DurationVar(&cfg.deadRetention, "dead-retention", daemon.DefaultDeadRetention, "how long dead-lettered outbound envelopes are kept before hourly GC deletes them (awpd-outbox §3 outbox.dead_retention)")
 	flag.Parse()
 
 	if cfg.domain == "" || cfg.kid == "" {
@@ -127,13 +129,14 @@ func run(cfg runConfig) error {
 	}
 
 	daemonCfg := daemon.Config{
-		Domain:    cfg.domain,
-		Kid:       cfg.kid,
-		Priv:      priv,
-		Store:     st,
-		Clock:     clock.Real{},
-		Resolver:  resolver,
-		OutboxCfg: outbox.DefaultConfig(),
+		Domain:        cfg.domain,
+		Kid:           cfg.kid,
+		Priv:          priv,
+		Store:         st,
+		Clock:         clock.Real{},
+		Resolver:      resolver,
+		OutboxCfg:     outbox.DefaultConfig(),
+		DeadRetention: cfg.deadRetention,
 	}
 	if cfg.quicAddr != "" {
 		clientTLS := &tls.Config{NextProtos: []string{"awp/1"}}
