@@ -43,13 +43,18 @@ flowchart TD
 | `spec/awp-sig-v0.1.md`     | Draft  | Normative sync signing profile (RFC 9421)    |
 | `spec/awp-discovery-v0.1.md` | Strawman | Index query/submission schema (post-M1 validation) |
 | `spec/awp-quic-v0.1.md`    | Draft  | Optional `awp/1` QUIC binding + `awp://` scheme |
+| `spec/awp-streaming-v0.1.md` | Draft | Optional chunked-response extension for async envelopes |
+| `spec/awp-kinds-v0.1.md`   | Draft  | Additive envelope/entity kind registrations (`received`, `status`) |
 | `spec/awpd-store-v0.1.md`  | Draft  | `awpd` only: persistence layout (bbolt)      |
 | `spec/awpd-outbox-v0.1.md` | Draft  | `awpd` only: delivery retry state machine    |
 
 The two `awpd-*` documents are implementation specs for the reference daemon.
 They are NOT normative for the protocol; alternative implementations may
 persist and retry however they like as long as the observable wire behavior
-in `awp-core` and `awp-sig` holds.
+in `awp-core` and `awp-sig` holds. `awp-streaming` and `awp-kinds` are
+newer, purely additive extensions — see `ideas/` for the design reasoning
+behind them and their current implementation status (neither is
+implemented in `awpd`/`pyawp` yet).
 
 ## Reference implementation
 
@@ -75,6 +80,7 @@ First milestone (tagged `v0.1.0-m1`): two instances completing a signed
 | [`docs/sdk-go.md`](docs/sdk-go.md) | The `sdk/go` client API reference. |
 | [`docs/cli-reference.md`](docs/cli-reference.md) | Every `awpd`/`awp` flag that actually exists. |
 | [`docs/deployment.md`](docs/deployment.md) | Running a real domain: TLS, QUIC, retention, a two-domain checklist. |
+| [`docs/patterns.md`](docs/patterns.md) | Non-normative conventions: self-service quota reporting, using `status`/`received` kinds. |
 
 ## Examples
 
