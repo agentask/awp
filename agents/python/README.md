@@ -1,118 +1,136 @@
-# Two AWP agents, in Python, with Google ADK
+# concierge.local — a Python AWP agent, talking to Grok
 
-Two [Google ADK](https://github.com/google/adk-python) agents —
-`trip-planner.local` and `concierge.local` — that talk to each other over
-**real AWP**: real Ed25519 signatures, real JCS (RFC 8785) canonicalization,
-real signed HTTP envelopes. Not a mock of the protocol wrapped around two
-chatbots — `pyawp/`, the small library underneath, is verified to
-byte-for-byte interoperate with this repo's Go reference implementation
-(see `scripts/crosscheck_go.py`).
+`concierge.local` — one of three AWP agents (Go, Python, Rust) that form a
+full triangle demo: every pair of agents talks directly over real AWP
+(real Ed25519 signatures, real JCS (RFC 8785) canonicalization, real
+signed HTTP envelopes), each one calling [xAI's Grok](https://x.ai) as its
+LLM. This directory is the Python corner of that triangle; it depends on
+`sdk/python` (`awp-sdk`) as a local, editable path dependency, so it is
+the same signing/verification code the rest of this repo uses — not a
+reimplementation.
 
 ```mermaid
-sequenceDiagram
-    participant TP as trip-planner.local (ADK Agent)
-    participant CO as concierge.local (ADK Agent)
-
-    TP->>CO: POST /awp/inbox — message (opens thread)
-    Note over CO: untrusted-content framing, then a real Gemini call
-    CO->>TP: POST /awp/inbox — reply
-    Note over TP: untrusted-content framing, then a real Gemini call
-    TP->>CO: POST /awp/inbox — reply
-    CO->>TP: POST /awp/inbox — reply
-    TP->>CO: POST /awp/inbox — close (after common.MAX_TURNS)
+graph LR
+    TP["trip-planner.local (Go, :8001)"]
+    CO["concierge.local (Python, :8002)"]
+    AC["activities.local (Rust, :8003)"]
+    TP -- initiates --> CO
+    CO -- initiates --> AC
+    AC -- initiates --> TP
 ```
+
+Each node initiates exactly one outbound thread and receives on the other
+edge — true all-to-all for three nodes, not a hub. This process:
+
+- **initiates** a thread with `activities.local`, asking for a favorite
+  activity or experience to round out the weekend, and carries it forward
+  for up to 3 exchanges each way;
+- **receives and replies** on the thread `trip-planner.local` opens with
+  it, giving a neighborhood and restaurant recommendation.
 
 ## Setup
 
 ```
 cd agents/python
 uv sync
-cp .env.example .env   # then fill in GOOGLE_API_KEY (or Vertex AI vars)
+cp .env.example .env   # then fill in XAI_API_KEY
 ```
 
-Every agent turn is a real Gemini call — there is no offline/mock mode.
-Get a key at <https://ai.google.dev/gemini-api/docs/api-key>, or use
-Vertex AI (see `.env.example`).
+Get a key at <https://console.x.ai/>. Every agent turn is a real Grok
+call — there is no offline/mock mode.
 
 ## Run
 
 ```
-uv run python demo.py
+uv run python -m concierge.main
 ```
 
-Starts both agents in one process on `127.0.0.1:8001`/`8002`, sends the
-opening message, and prints the conversation as it happens — signed,
-delivered, and verified over real HTTP the whole way, with a Gemini call
-behind every turn.
+Starts on `http://127.0.0.1:8002`, serves a signed index at
+`/.well-known/awp.json`, sends the opening message to `activities.local`
+about 1 second after startup, and prints every send/receive to stdout as
+`[from] -> [to] (turn N/max): text`. Running it standalone (nothing else
+up on `:8001`/`:8003` yet) is expected to fail to *reach* its peer — the
+opener send will error out, and no thread from `trip-planner.local` will
+ever land on the inbox — but the process itself starts, serves its index,
+and does not crash; that failure mode is exactly what running this corner
+of the triangle alone looks like.
 
-To run them as genuinely separate processes instead (two terminals):
+Override via env vars (or `.env`): `AWP_SELF_PORT`, `AWP_SELF_DOMAIN`,
+`AWP_PEERS` (comma-separated `domain=baseURL` pairs), `AWP_MODEL`.
+
+## Testing
 
 ```
-uv run python -m agent_b.main   # concierge.local, :8002
-uv run python -m agent_a.main   # trip-planner.local, :8001 — sends the opener
+uv run pytest
 ```
 
-## Verifying the transport without spending a Gemini call
-
-```
-uv run python scripts/verify_nodes.py     # pure pyawp: sign/send/verify/dedupe, no ADK
-uv run python scripts/crosscheck_go.py    # builds and runs a real Go internal/daemon.Daemon
-                                           # alongside a real pyawp.Node — proves interop
-                                           # in both directions, not just self-consistency
-```
-
-Neither needs `GOOGLE_API_KEY`. Run these first if something's wrong —
-they isolate the wire protocol from the LLM entirely, and `crosscheck_go.py`
-specifically caught two real bugs during development (both about the
-difference between JSON `null` and `[]` for Go's non-`omitempty` slice
-fields — see `pyawp/identity.py`'s module doc).
+Covers the index round-trip/self-verify and the inbox gate (accepts a
+real signed envelope, rejects a tampered one) — no `XAI_API_KEY` or
+running peers required; these tests build their own signed fixtures via
+`awp`'s own signing primitives, the same way `agents/go/node_test.go` and
+`agents/rust/tests/node_test.rs` do.
 
 ## What's real, what's simplified
 
-Same convention the Go `examples/` use — real protocol, simplified
-topology/persistence:
+Same convention the rest of this repo uses (see `agents/go/README.md`,
+`examples/README.md`): real protocol, simplified topology/persistence.
 
-- **Signing and verification are fully real**, both directions, proven
-  against the actual Go implementation, not just internally consistent
-  with themselves.
-- **DNS is a Go dict, not real DNS** (`index_url` functions in
-  `agent_a/main.py`/`agent_b/main.py`/`demo.py`) — both agents are on
-  localhost.
-- **TLS is skipped entirely** — plain HTTP, unlike the Go examples (which
-  at least use self-signed TLS via `httptest.NewTLSServer`). Nothing
-  about the signing/verification logic depends on the transport being
-  HTTPS; this is a demo-only simplification, not a protocol requirement
-  loosened. Never do this outside a local demo.
-- **The inbox gate's "durably enqueue" step is an in-memory `asyncio`
-  task, not a persisted queue** — see `pyawp/node.py`'s module doc. No
-  `internal/store` counterpart exists here at all; a crash loses
-  in-flight state, which the Go reference daemon is specifically built
-  to survive.
-- **No delegation, no sync tool calls, no sessions** — `pyawp` implements
-  exactly what these two agents need (signed indexes, signed async
-  envelopes, a minimal inbox gate) and nothing else. See `pyawp/__init__.py`.
-- **The conversation is turn-capped** (`common.MAX_TURNS`, default 3 each
-  way) so two LLMs don't talk forever; real agents would have their own
-  termination logic, not a hardcoded counter.
+- **Signing and verification are fully real** and interoperable with the
+  rest of this module — this package imports `awp` (`sdk/python`)
+  directly (see `concierge/node.py`), via a local editable path dependency
+  (`[tool.uv.sources]` in `pyproject.toml`), not a copy. There is no
+  separate reimplementation to drift from the reference.
+- **DNS is a static map, not real DNS** — `AWP_PEERS`
+  (`concierge/config.py`), resolved the same way `agents/go/config.go`'s
+  `indexURLFor` and `agents/rust/src/config.rs`'s `index_url_for` do.
+- **TLS is skipped** — plain HTTP, matching the Go and Rust demos' own
+  simplification. Nothing about the signing/verification logic depends on
+  the transport being HTTPS; this is a demo-only shortcut, never do it
+  outside a local demo.
+- **The inbox gate is in-memory, not persisted** (`concierge/node.py`) —
+  it implements core §2.2's receiver gate in the mandated order (parse ->
+  TTL -> verify sig, with one refresh-and-retry on failure -> dedupe ->
+  enqueue), but "durably enqueue" is an `asyncio.create_task`, not a
+  persisted queue; `seen`-id dedupe is an in-memory dict, not bbolt. A
+  crash loses in-flight state, unlike `internal/store`, which is
+  specifically built to survive that.
+- **The conversation is turn-capped** (`MAX_TURNS = 3` in
+  `concierge/persona.py`, matching `agents/go/persona.go`'s `maxTurns` and
+  `agents/rust/src/persona.rs`'s `MAX_TURNS`) so the two LLMs on either
+  side of a thread don't talk forever.
+- **The inbox reacts to both `message` and `reply` envelope kinds**, not
+  only `message` (`concierge/node.py`'s `Node._process`) — this agent has
+  to correctly carry to completion both a thread it opens
+  (`concierge.local` -> `activities.local`) and one opened against it
+  (`trip-planner.local` -> `concierge.local`), so its gate reacts to both.
+  This deliberately diverges from the retired `agents/python/pyawp/node.py`,
+  whose stricter `kind == "message"` filter meant its own
+  thread-*initiator* never actually reacted to the other side's replies —
+  a real gap in that reference, not a pattern this node copies.
 
 ## Where the untrusted-content framing is
 
-`common.untrusted_wrapper` — every inbound envelope body is wrapped in
-explicit untrusted-content framing before it ever reaches the model. This
-is [`docs/agent-guide.md`](../../docs/agent-guide.md)'s "one rule that
-matters most" (authentication is not content trust), made concrete: the
-signature proves which domain sent a message, never that its text is
-safe to treat as instructions.
+`concierge/persona.py`'s `untrusted_wrapper` — every inbound envelope body
+is wrapped in explicit untrusted-content framing before it ever reaches
+Grok. This is [`docs/agent-guide.md`](../../docs/agent-guide.md)'s "one
+rule that matters most" (authentication is not content trust), made
+concrete: a verified signature proves which domain sent a message, never
+that its text is safe to treat as instructions. Byte-for-byte identical to
+`agents/go/persona.go`'s `untrustedWrapper` and
+`agents/rust/src/persona.rs`'s `untrusted_wrapper`.
 
 ## Layout
 
 ```
-pyawp/            identity.py (signing/JCS), envelope.py, client.py (send), node.py (receive)
-common.py         wires a google.adk Agent into a pyawp.Node's MessageHandler
-agent_a/main.py   trip-planner.local
-agent_b/main.py   concierge.local
-demo.py           runs both in one process, drives one conversation
-scripts/          verify_nodes.py, crosscheck_go.py (+ its Go helper binary)
+concierge/
+  node.py      identity bootstrap (via sdk/python's awp.bootstrap), signed index,
+               inbox gate (verify + dedupe), send — built on awp.client.Client
+  llm.py       plain httpx xAI Grok client (no SDK dependency)
+  persona.py   system prompt, untrusted-content wrapper, per-thread turn cap + history
+  config.py    .env / env var loading, AWP_PEERS static-map DNS resolution
+  main.py      wiring: starts the HTTP server, finalizes the index, sends the opener
+tests/         index round-trip + self-verify; inbox accepts a real signed
+               envelope, rejects a tampered one
 ```
 
 See the main repo's [`docs/agent-guide.md`](../../docs/agent-guide.md) for

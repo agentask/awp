@@ -1,0 +1,24 @@
+[package]
+name = "awp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "AWP reference Rust SDK: a thin client for sending envelopes and calling sync tools."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+sha2 = "0.10"
+base64 = "0.22"
+ulid = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"

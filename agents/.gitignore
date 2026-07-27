@@ -1,0 +1,7 @@
+.env
+.env.bak
+
+# `go build .` with no -o writes a binary named after the package dir —
+# easy to create by accident while debugging inside agents/go.
+/go/go
+/go/trip-planner

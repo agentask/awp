@@ -1,0 +1,50 @@
+# Runs the full Go/Python/Rust AWP triangle in containers, one per corner.
+# `AWP_PEERS` below points at compose service names (Docker's built-in DNS),
+# not 127.0.0.1 — the native (non-docker) .env.example defaults use
+# 127.0.0.1 instead, since there's no service-name DNS outside compose.
+#
+# Setup:  cp .env.example .env && $EDITOR .env   # fill in XAI_API_KEY
+# Run:    docker compose up --build
+# (see ../Makefile for `make docker-up` etc.)
+services:
+  trip-planner:
+    build:
+      context: ..
+      dockerfile: agents/go/Dockerfile
+    environment:
+      XAI_API_KEY: ${XAI_API_KEY:?set XAI_API_KEY in agents/.env}
+      AWP_MODEL: ${AWP_MODEL:-grok-4-fast}
+      AWP_SELF_DOMAIN: trip-planner.local
+      AWP_SELF_PORT: "8001"
+      AWP_PEERS: concierge.local=http://concierge:8002,activities.local=http://activities:8003
+      AWP_ADVERTISE_HOST: trip-planner
+    ports:
+      - "8001:8001"
+
+  concierge:
+    build:
+      context: ..
+      dockerfile: agents/python/Dockerfile
+    environment:
+      XAI_API_KEY: ${XAI_API_KEY:?set XAI_API_KEY in agents/.env}
+      AWP_MODEL: ${AWP_MODEL:-grok-4-fast}
+      AWP_SELF_DOMAIN: concierge.local
+      AWP_SELF_PORT: "8002"
+      AWP_PEERS: trip-planner.local=http://trip-planner:8001,activities.local=http://activities:8003
+      AWP_ADVERTISE_HOST: concierge
+    ports:
+      - "8002:8002"
+
+  activities:
+    build:
+      context: ..
+      dockerfile: agents/rust/Dockerfile
+    environment:
+      XAI_API_KEY: ${XAI_API_KEY:?set XAI_API_KEY in agents/.env}
+      AWP_MODEL: ${AWP_MODEL:-grok-4-fast}
+      AWP_SELF_DOMAIN: activities.local
+      AWP_SELF_PORT: "8003"
+      AWP_PEERS: trip-planner.local=http://trip-planner:8001,concierge.local=http://concierge:8002
+      AWP_ADVERTISE_HOST: activities
+    ports:
+      - "8003:8003"
