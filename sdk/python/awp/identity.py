@@ -190,6 +190,11 @@ class Index:
     peers: list[str] | None = None
     crawl: bool | None = None
     transports: list[Transport] | None = None
+    # capabilities is awp-capabilities-v0.1.md §1: OPTIONAL domain-level
+    # protocol-extension advertisement (e.g. "awp-streaming-v0.1"), in the
+    # same spirit as transports. Absence means "no declared optional
+    # capabilities," exactly like absent transports means HTTPS-only.
+    capabilities: list[str] | None = None
     sig: Sig | None = None
 
     def to_dict(self, *, with_sig: bool = True) -> dict[str, Any]:
@@ -207,6 +212,8 @@ class Index:
             d["crawl"] = self.crawl
         if self.transports:
             d["transports"] = [t.to_dict() for t in self.transports]
+        if self.capabilities:
+            d["capabilities"] = list(self.capabilities)
         if with_sig and self.sig is not None:
             d["sig"] = self.sig.to_dict()
         return d
@@ -222,6 +229,7 @@ class Index:
             inbox=d.get("inbox", ""),
             peers=d.get("peers"), crawl=d.get("crawl"),
             transports=[Transport.from_dict(t) for t in d["transports"]] if d.get("transports") else None,
+            capabilities=list(d["capabilities"]) if d.get("capabilities") else None,
             sig=Sig.from_dict(d["sig"]) if d.get("sig") else None,
         )
 

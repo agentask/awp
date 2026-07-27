@@ -3,6 +3,7 @@ package identity
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -117,6 +118,48 @@ func TestIndexSelfSignVerify_RoundTrip(t *testing.T) {
 	}
 	if err := idx.VerifySelfSig(); err != nil {
 		t.Fatalf("verify index: %v", err)
+	}
+}
+
+// TestIndexCapabilities_SignedAndVerified confirms the awp-capabilities-v0.1
+// Index.Capabilities field round-trips through sign/verify like any other
+// index field — it's inside the signed document, not an exception.
+func TestIndexCapabilities_SignedAndVerified(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	idx := &Index{
+		Awp:     "0.1",
+		Domain:  "example.com",
+		Updated: "2026-07-21T09:00:00.000Z",
+		Keys: []Key{
+			{Kid: "2026-07-01", Alg: "ed25519", Pub: encodePub(pub), Created: "2026-07-01T00:00:00.000Z"},
+		},
+		Inbox:        "https://example.com/awp/inbox",
+		Capabilities: []string{"awp-streaming-v0.1", "awp-kinds-v0.1/status"},
+	}
+	if err := idx.Sign(priv, "2026-07-01"); err != nil {
+		t.Fatalf("sign index: %v", err)
+	}
+	if err := idx.VerifySelfSig(); err != nil {
+		t.Fatalf("verify index: %v", err)
+	}
+
+	raw, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var roundTripped Index
+	if err := json.Unmarshal(raw, &roundTripped); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if err := roundTripped.VerifySelfSig(); err != nil {
+		t.Fatalf("verify round-tripped index: %v", err)
+	}
+
+	// Tampering with capabilities after signing must invalidate the sig —
+	// this field is inside the signed document, not bolted on beside it.
+	roundTripped.Capabilities = []string{"forged-capability"}
+	if err := roundTripped.VerifySelfSig(); err == nil {
+		t.Fatal("expected tampered capabilities to invalidate the signature")
 	}
 }
 

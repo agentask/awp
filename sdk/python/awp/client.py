@@ -40,6 +40,12 @@ class ToolCallError(Exception):
 class CallOptions:
     session: str = ""
     delegation: list[delegation.Link] | None = None
+    # dry_run sets AWP-Dry-Run: true (awp-capabilities-v0.1.md §3.1) — an
+    # ordinary AWP-* header, so it's covered by the signature automatically
+    # with no change to sign_request's covered-component logic. Advisory:
+    # a provider that never declared the "dry-run" capability MAY ignore
+    # it silently rather than reject the call.
+    dry_run: bool = False
 
 
 @dataclass
@@ -233,6 +239,8 @@ class Client:
             headers["AWP-Session"] = opts.session
         if opts.delegation:
             headers["AWP-Delegation"] = httpsig.encode_delegation_header(opts.delegation)
+        if opts.dry_run:
+            headers["AWP-Dry-Run"] = "true"
 
         signed_headers = httpsig.sign_request(
             method="POST", url=endpoint, headers=headers, body=input_bytes,

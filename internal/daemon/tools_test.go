@@ -215,6 +215,80 @@ func TestServeToolCall_HostedStatelessSuccess(t *testing.T) {
 	}
 }
 
+// TestServeToolCall_DryRunHeaderReachesHandler covers awp-capabilities-v0.1.md
+// §3.1: AWP-Dry-Run is an ordinary AWP-* header (no httpsig change needed
+// to cover it in the signature) and serveToolCall threads it through to
+// the handler via daemon.IsDryRun, not a ToolHandler signature change.
+func TestServeToolCall_DryRunHeaderReachesHandler(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	d, resolver := newToolTestDaemon(t, "provider.example.com", clock.NewFixed(now))
+	srv := httptest.NewServer(d)
+	defer srv.Close()
+
+	var gotDryRun bool
+	m := statelessToolManifest("provider.example.com#echo")
+	m.Capabilities = []string{manifest.DryRunCapability}
+	handler := func(ctx context.Context, caller string, chain []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+		gotDryRun = IsDryRun(ctx)
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	if err := d.RegisterTool(srv.URL, Tool{Manifest: m, Handler: handler}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	callerPub, callerPriv := mustKeypair(t)
+	resolver.add("caller.example.com", "k1", callerPub)
+
+	body := []byte(`{}`)
+	req := signedToolRequest(t, http.MethodPost, srv.URL+"/awp/tools/echo", body, callerPriv, "caller.example.com/k1", now,
+		map[string]string{"AWP-Dry-Run": "true"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, raw)
+	}
+	if !gotDryRun {
+		t.Fatal("expected the handler to observe IsDryRun(ctx) == true")
+	}
+}
+
+func TestServeToolCall_NoDryRunHeaderMeansNotDryRun(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	d, resolver := newToolTestDaemon(t, "provider.example.com", clock.NewFixed(now))
+	srv := httptest.NewServer(d)
+	defer srv.Close()
+
+	var gotDryRun bool
+	handler := func(ctx context.Context, caller string, chain []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+		gotDryRun = IsDryRun(ctx)
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	if err := d.RegisterTool(srv.URL, Tool{Manifest: statelessToolManifest("provider.example.com#echo"), Handler: handler}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	callerPub, callerPriv := mustKeypair(t)
+	resolver.add("caller.example.com", "k1", callerPub)
+
+	body := []byte(`{}`)
+	req := signedToolRequest(t, http.MethodPost, srv.URL+"/awp/tools/echo", body, callerPriv, "caller.example.com/k1", now, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if gotDryRun {
+		t.Fatal("expected IsDryRun(ctx) == false when the header is absent")
+	}
+}
+
 func TestServeToolCall_RejectsBadSignature(t *testing.T) {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	d, _ := newToolTestDaemon(t, "provider.example.com", clock.NewFixed(now))

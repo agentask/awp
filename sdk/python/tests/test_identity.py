@@ -71,6 +71,40 @@ def test_index_self_sign_rejects_unknown_kid() -> None:
         idx.verify_self_sig()
 
 
+def test_index_capabilities_signed_and_tamper_detected() -> None:
+    """awp-capabilities-v0.1.md §1: capabilities is inside the signed
+    document, not bolted on beside it."""
+    import json
+
+    priv, pub = identity.generate_keypair()
+    idx = identity.Index(
+        domain="example.local", updated=identity.now_rfc3339_milli(),
+        keys=[identity.new_key(pub, "k1")], inbox="http://127.0.0.1:8001/awp/inbox",
+        capabilities=["awp-streaming-v0.1", "awp-kinds-v0.1/status"],
+    )
+    idx.sign(priv, "k1")
+    idx.verify_self_sig()
+
+    raw = json.dumps(idx.to_dict()).encode()
+    round_tripped = identity.Index.from_dict(json.loads(raw))
+    assert round_tripped.capabilities == ["awp-streaming-v0.1", "awp-kinds-v0.1/status"]
+    round_tripped.verify_self_sig()
+
+    round_tripped.capabilities = ["forged-capability"]
+    with pytest.raises(identity.BadSignatureError):
+        round_tripped.verify_self_sig()
+
+
+def test_index_capabilities_absent_by_default() -> None:
+    priv, pub = identity.generate_keypair()
+    idx = identity.Index(
+        domain="example.local", updated=identity.now_rfc3339_milli(),
+        keys=[identity.new_key(pub, "k1")], inbox="",
+    )
+    assert idx.capabilities is None
+    assert "capabilities" not in idx.to_dict(with_sig=False)
+
+
 def test_index_round_trip_through_json_preserves_signature() -> None:
     import json
 

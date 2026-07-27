@@ -182,3 +182,86 @@ func TestCheckResponseSigning_InvalidSignature_Fails(t *testing.T) {
 		t.Fatalf("status=%s detail=%s, want Fail (present-but-invalid signature)", r.Status, r.Detail)
 	}
 }
+
+func TestCheckStatusEntity_NoStatusEntity_Skips(t *testing.T) {
+	const domain = "status-entity-none.example.com"
+	_, priv, table, httpClient := newTargetDaemon(t, domain, "k1", false)
+
+	report := Run(context.Background(), domain, Options{
+		BaseURL: baseURLOpt(table), HTTP: httpClient,
+		CallerDomain: domain, CallerKid: "k1", CallerPriv: priv,
+	})
+	r := getCheck(t, report, "awp-kinds-2-status-entity")
+	if r.Status != Skip {
+		t.Fatalf("status=%s detail=%s, want Skip", r.Status, r.Detail)
+	}
+}
+
+func TestCheckStatusEntity_RealDaemonWithStatusEntity_Passes(t *testing.T) {
+	const domain = "status-entity-present.example.com"
+	d, priv, table, httpClient := newTargetDaemon(t, domain, "k1", false)
+
+	baseURL := table.get(domain)
+	if err := d.RegisterTool(baseURL, daemon.Tool{
+		Manifest: &manifest.Manifest{
+			Awp: "0.1", Name: domain + "#health", Kind: "status", Version: "1.0.0",
+			Description:  "test status entity",
+			Distribution: manifest.Distribution{Hosted: &manifest.Hosted{}},
+			State:        "stateless",
+			Auth:         manifest.Auth{Sig: "required"},
+			Pricing:      json.RawMessage("null"),
+		},
+		Handler: func(_ context.Context, caller string, _ []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+			out, err := json.Marshal(map[string]any{
+				"healthy":    true,
+				"checked_at": time.Now().UTC().Format(time.RFC3339),
+			})
+			if err != nil {
+				return nil, &apperr.Error{Code: apperr.CodeInternal, Detail: err.Error()}
+			}
+			return out, nil
+		},
+	}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	report := Run(context.Background(), domain, Options{
+		BaseURL: baseURLOpt(table), HTTP: httpClient,
+		CallerDomain: domain, CallerKid: "k1", CallerPriv: priv,
+	})
+	r := getCheck(t, report, "awp-kinds-2-status-entity")
+	if r.Status != Pass {
+		t.Fatalf("status=%s detail=%s, want Pass", r.Status, r.Detail)
+	}
+}
+
+func TestCheckStatusEntity_MalformedResponse_Fails(t *testing.T) {
+	const domain = "status-entity-malformed.example.com"
+	d, priv, table, httpClient := newTargetDaemon(t, domain, "k1", false)
+
+	baseURL := table.get(domain)
+	if err := d.RegisterTool(baseURL, daemon.Tool{
+		Manifest: &manifest.Manifest{
+			Awp: "0.1", Name: domain + "#health", Kind: "status", Version: "1.0.0",
+			Description:  "test status entity that forgets healthy",
+			Distribution: manifest.Distribution{Hosted: &manifest.Hosted{}},
+			State:        "stateless",
+			Auth:         manifest.Auth{Sig: "required"},
+			Pricing:      json.RawMessage("null"),
+		},
+		Handler: func(_ context.Context, caller string, _ []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+			return json.RawMessage(`{"detail":"no healthy field at all"}`), nil
+		},
+	}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	report := Run(context.Background(), domain, Options{
+		BaseURL: baseURLOpt(table), HTTP: httpClient,
+		CallerDomain: domain, CallerKid: "k1", CallerPriv: priv,
+	})
+	r := getCheck(t, report, "awp-kinds-2-status-entity")
+	if r.Status != Fail {
+		t.Fatalf("status=%s detail=%s, want Fail (missing healthy field)", r.Status, r.Detail)
+	}
+}

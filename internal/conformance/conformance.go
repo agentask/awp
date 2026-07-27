@@ -134,6 +134,7 @@ func Run(ctx context.Context, domain string, opts Options) Report {
 	}
 	// Beyond the two named checklists (see sync_sig.go's doc comment).
 	add(checkResponseSigning(ctx, opts, idx))
+	add(checkStatusEntity(ctx, opts, idx))
 	return report
 }
 

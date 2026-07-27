@@ -174,7 +174,12 @@ func (d *Daemon) serveToolCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	output, toolErr := d.invokeTool(r.Context(), rt, result, body)
+	// awp-capabilities-v0.1.md §3.1: AWP-Dry-Run is advisory — set it
+	// regardless of whether this entity's manifest declared the
+	// "dry-run" capability, and let the handler decide what to do with
+	// it (most handlers, which never call IsDryRun, execute normally).
+	ctx := WithDryRun(r.Context(), strings.EqualFold(r.Header.Get("AWP-Dry-Run"), "true"))
+	output, toolErr := d.invokeTool(ctx, rt, result, body)
 	if toolErr != nil {
 		writeSyncError(w, statusForErrorCode(toolErr.Code), toolErr.Code, toolErr.Detail)
 		return

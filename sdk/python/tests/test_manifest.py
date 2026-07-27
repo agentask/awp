@@ -25,6 +25,37 @@ def test_sign_verify_round_trip() -> None:
     m.verify(pub)
 
 
+def test_environment_and_capabilities_sign_verify_and_has_capability() -> None:
+    priv, pub = identity.generate_keypair()
+    m = make_manifest(environment=manifest.ENVIRONMENT_SANDBOX, capabilities=[manifest.DRY_RUN_CAPABILITY])
+
+    assert m.has_capability(manifest.DRY_RUN_CAPABILITY)
+    assert not m.has_capability("some-other-capability")
+
+    m.sign(priv, "k1")
+    m.verify(pub)
+
+    tampered = make_manifest(environment=manifest.ENVIRONMENT_PRODUCTION, capabilities=[manifest.DRY_RUN_CAPABILITY])
+    tampered.sig = m.sig
+    with pytest.raises(identity.BadSignatureError):
+        tampered.verify(pub)
+
+
+def test_environment_defaults_to_absent_meaning_production() -> None:
+    m = make_manifest()
+    assert m.environment == ""
+    assert "environment" not in m.to_dict(with_sig=False)
+    assert not m.has_capability(manifest.DRY_RUN_CAPABILITY)
+
+
+def test_capabilities_round_trip_through_json() -> None:
+    m = make_manifest(environment=manifest.ENVIRONMENT_SANDBOX, capabilities=[manifest.DRY_RUN_CAPABILITY])
+    raw = json.dumps(m.to_dict(with_sig=False)).encode()
+    round_tripped = manifest.Manifest.from_dict(json.loads(raw))
+    assert round_tripped.environment == manifest.ENVIRONMENT_SANDBOX
+    assert round_tripped.has_capability(manifest.DRY_RUN_CAPABILITY)
+
+
 def test_pricing_and_inbox_always_present_null() -> None:
     m = make_manifest()
     d = m.to_dict(with_sig=False)

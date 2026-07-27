@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/agentask/awp/internal/identity"
 )
@@ -59,7 +60,34 @@ type Manifest struct {
 	Auth         Auth            `json:"auth"`
 	Pricing      json.RawMessage `json:"pricing"`
 	Inbox        *string         `json:"inbox"`
-	Sig          *identity.Sig   `json:"sig,omitempty"`
+	// Environment is awp-capabilities-v0.1.md §2: absent or "production"
+	// means production; "sandbox" marks the entity as safe to integrate
+	// against with no real-world side effects (entity-specific what that
+	// means, per its own Description).
+	Environment string `json:"environment,omitempty"`
+	// Capabilities is awp-capabilities-v0.1.md §3: entity-level feature
+	// declarations. The only token that document defines is "dry-run" —
+	// this entity honors the AWP-Dry-Run sync-call header.
+	Capabilities []string      `json:"capabilities,omitempty"`
+	Sig          *identity.Sig `json:"sig,omitempty"`
+}
+
+// DryRunCapability is the awp-capabilities-v0.1.md §3 token a manifest
+// lists in Capabilities to declare it honors AWP-Dry-Run.
+const DryRunCapability = "dry-run"
+
+// EnvironmentSandbox is awp-capabilities-v0.1.md §2's non-production
+// marker. EnvironmentProduction is the default and never needs to be set
+// explicitly — Environment == "" means production.
+const (
+	EnvironmentSandbox    = "sandbox"
+	EnvironmentProduction = "production"
+)
+
+// HasCapability reports whether m declares support for capability —
+// e.g. manifest.HasCapability(manifest.DryRunCapability).
+func (m *Manifest) HasCapability(capability string) bool {
+	return slices.Contains(m.Capabilities, capability)
 }
 
 // Sign attaches m.Sig per core §0.1, signed by domainOf(m.Name)'s key.

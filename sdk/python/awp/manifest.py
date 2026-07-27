@@ -102,6 +102,17 @@ class Auth:
         return Auth(sig=d.get("sig", "required"), scopes=d.get("scopes"))
 
 
+# DRY_RUN_CAPABILITY is the awp-capabilities-v0.1.md §3 token a manifest
+# lists in `capabilities` to declare it honors AWP-Dry-Run.
+DRY_RUN_CAPABILITY = "dry-run"
+
+# ENVIRONMENT_SANDBOX / ENVIRONMENT_PRODUCTION are awp-capabilities-v0.1.md
+# §2's environment values. Environment == "" means production — the
+# default never needs to be set explicitly.
+ENVIRONMENT_SANDBOX = "sandbox"
+ENVIRONMENT_PRODUCTION = "production"
+
+
 @dataclass
 class Manifest:
     name: str
@@ -116,7 +127,19 @@ class Manifest:
     awp: str = "0.1"
     pricing: Any = None
     inbox: str | None = None
+    # environment is awp-capabilities-v0.1.md §2: absent/"" or
+    # "production" means production; "sandbox" marks the entity as safe
+    # to integrate against with no real-world side effects.
+    environment: str = ""
+    # capabilities is awp-capabilities-v0.1.md §3: entity-level feature
+    # declarations (e.g. DRY_RUN_CAPABILITY) — distinct in scope from
+    # Index.capabilities, which is domain-level.
+    capabilities: list[str] | None = None
     sig: identity.Sig | None = None
+
+    def has_capability(self, capability: str) -> bool:
+        """e.g. m.has_capability(manifest.DRY_RUN_CAPABILITY)."""
+        return capability in (self.capabilities or [])
 
     def to_dict(self, *, with_sig: bool = True) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -133,6 +156,10 @@ class Manifest:
             "pricing": self.pricing,
             "inbox": self.inbox,
         }
+        if self.environment:
+            d["environment"] = self.environment
+        if self.capabilities:
+            d["capabilities"] = list(self.capabilities)
         if with_sig and self.sig is not None:
             d["sig"] = self.sig.to_dict()
         return d
@@ -148,6 +175,8 @@ class Manifest:
             auth=Auth.from_dict(d.get("auth") or {}),
             pricing=d.get("pricing"),
             inbox=d.get("inbox"),
+            environment=d.get("environment", ""),
+            capabilities=list(d["capabilities"]) if d.get("capabilities") else None,
             sig=identity.Sig.from_dict(d["sig"]) if d.get("sig") else None,
         )
 

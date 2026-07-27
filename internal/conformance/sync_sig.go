@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/agentask/awp/internal/httpsig"
 	"github.com/agentask/awp/internal/identity"
@@ -30,7 +31,7 @@ func checkResponseSigning(ctx context.Context, opts Options, idx *identity.Index
 		return CheckResult{ID: id, Description: desc, Status: Skip, Detail: "requires -key/-kid to sign a sync call"}
 	}
 
-	principal, endpoint, err := findHostedTool(ctx, opts, idx)
+	principal, endpoint, err := findHostedEntity(ctx, opts, idx, "tool")
 	if err != nil {
 		return CheckResult{ID: id, Description: desc, Status: Skip, Detail: "could not resolve a callable tool to probe: " + err.Error()}
 	}
@@ -68,13 +69,75 @@ func checkResponseSigning(ctx context.Context, opts Options, idx *identity.Index
 	return CheckResult{ID: id, Description: desc, Status: Pass, Detail: "verified response signature from " + principal}
 }
 
-// findHostedTool looks for the first kind:tool entity in idx whose
-// manifest verifies (sha256 pin, then signature) and declares a hosted
-// distribution, returning its principal and endpoint. ("", "", nil) means
-// none was found — not itself an error.
-func findHostedTool(ctx context.Context, opts Options, idx *identity.Index) (principal, endpoint string, err error) {
+// checkStatusEntity is, like checkResponseSigning, outside the core §5 /
+// awp-quic §8 checklists — awp-kinds-v0.1.md §2 registers `status` as an
+// entity kind, not a core checklist item. Skips (not fails) when there's
+// nothing to probe: a domain with no kind:status entity hasn't done
+// anything wrong, it just hasn't adopted this optional registration.
+func checkStatusEntity(ctx context.Context, opts Options, idx *identity.Index) CheckResult {
+	const id = "awp-kinds-2-status-entity"
+	const desc = "A kind:status entity, if present, responds with a conforming {healthy, checked_at} shape (awp-kinds-v0.1.md §2)."
+
+	if opts.CallerPriv == nil {
+		return CheckResult{ID: id, Description: desc, Status: Skip, Detail: "requires -key/-kid to sign a sync call"}
+	}
+
+	principal, endpoint, err := findHostedEntity(ctx, opts, idx, "status")
+	if err != nil {
+		return CheckResult{ID: id, Description: desc, Status: Skip, Detail: "could not resolve a kind:status entity to probe: " + err.Error()}
+	}
+	if endpoint == "" {
+		return CheckResult{ID: id, Description: desc, Status: Skip, Detail: "domain publishes no kind:status entity"}
+	}
+
+	body := []byte(`{}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return CheckResult{ID: id, Description: desc, Status: Fail, Detail: err.Error()}
+	}
+	keyID := opts.CallerDomain + "/" + opts.CallerKid
+	if err := httpsig.Sign(req, body, opts.CallerPriv, keyID, opts.now()); err != nil {
+		return CheckResult{ID: id, Description: desc, Status: Fail, Detail: "sign probe request: " + err.Error()}
+	}
+
+	resp, err := opts.client().Do(req)
+	if err != nil {
+		return CheckResult{ID: id, Description: desc, Status: Fail, Detail: err.Error()}
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return CheckResult{ID: id, Description: desc, Status: Fail, Detail: err.Error()}
+	}
+	if resp.StatusCode/100 != 2 {
+		return CheckResult{ID: id, Description: desc, Status: Fail, Detail: fmt.Sprintf("%s: status %d: %s", principal, resp.StatusCode, respBody)}
+	}
+
+	var out struct {
+		Output struct {
+			Healthy   *bool  `json:"healthy"`
+			CheckedAt string `json:"checked_at"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return CheckResult{ID: id, Description: desc, Status: Fail, Detail: "unparseable response: " + err.Error()}
+	}
+	if out.Output.Healthy == nil {
+		return CheckResult{ID: id, Description: desc, Status: Fail, Detail: "response has no boolean \"healthy\" field"}
+	}
+	if _, err := time.Parse(time.RFC3339, out.Output.CheckedAt); err != nil {
+		return CheckResult{ID: id, Description: desc, Status: Fail, Detail: "\"checked_at\" is not a valid RFC 3339 timestamp: " + err.Error()}
+	}
+	return CheckResult{ID: id, Description: desc, Status: Pass, Detail: fmt.Sprintf("%s reports healthy=%v as of %s", principal, *out.Output.Healthy, out.Output.CheckedAt)}
+}
+
+// findHostedEntity looks for the first entity of kind wantKind in idx
+// whose manifest verifies (sha256 pin, then signature) and declares a
+// hosted distribution, returning its principal and endpoint. ("", "",
+// nil) means none was found — not itself an error.
+func findHostedEntity(ctx context.Context, opts Options, idx *identity.Index, wantKind string) (principal, endpoint string, err error) {
 	for _, entry := range idx.Entities {
-		if entry.Kind != "tool" {
+		if entry.Kind != wantKind {
 			continue
 		}
 		m, ferr := fetchAndVerifyManifest(ctx, opts, idx, entry.Manifest, entry.ManifestSha256)

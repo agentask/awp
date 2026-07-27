@@ -67,6 +67,44 @@ func TestManifestSignVerify_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestManifestCapabilitiesAndEnvironment covers awp-capabilities-v0.1.md
+// §2/§3: Environment/Capabilities sign, verify, and tamper-detect exactly
+// like any other manifest field, and HasCapability reads them correctly.
+func TestManifestCapabilitiesAndEnvironment(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	m := testManifest()
+	m.Environment = EnvironmentSandbox
+	m.Capabilities = []string{DryRunCapability}
+
+	if !m.HasCapability(DryRunCapability) {
+		t.Fatal("expected HasCapability(dry-run) to be true")
+	}
+	if m.HasCapability("some-other-capability") {
+		t.Fatal("expected HasCapability to be false for an undeclared capability")
+	}
+
+	if err := m.Sign(priv, "2026-07-01"); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if err := m.Verify(pub); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+
+	// Tampering with either field after signing must invalidate the sig.
+	tampered := *m
+	tampered.Environment = EnvironmentProduction
+	if err := tampered.Verify(pub); err == nil {
+		t.Fatal("expected a tampered environment to invalidate the signature")
+	}
+}
+
+func TestManifestEnvironment_DefaultIsProduction(t *testing.T) {
+	m := testManifest()
+	if m.Environment != "" {
+		t.Fatalf("expected zero-value Environment to be empty (production), got %q", m.Environment)
+	}
+}
+
 func TestManifestVerify_RejectsTamperedContent(t *testing.T) {
 	pub, priv := mustKeypair(t)
 	m := testManifest()

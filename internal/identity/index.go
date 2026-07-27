@@ -49,16 +49,17 @@ type Transport struct {
 // Index is the signed root document served at /.well-known/awp.json
 // (core §1.1).
 type Index struct {
-	Awp        string      `json:"awp"`
-	Domain     string      `json:"domain"`
-	Updated    string      `json:"updated"`
-	Keys       []Key       `json:"keys"`
-	Entities   []Entity    `json:"entities"`
-	Inbox      string      `json:"inbox"`
-	Peers      []string    `json:"peers,omitempty"`
-	Crawl      *bool       `json:"crawl,omitempty"`
-	Transports []Transport `json:"transports,omitempty"`
-	Sig        *Sig        `json:"sig,omitempty"`
+	Awp          string      `json:"awp"`
+	Domain       string      `json:"domain"`
+	Updated      string      `json:"updated"`
+	Keys         []Key       `json:"keys"`
+	Entities     []Entity    `json:"entities"`
+	Inbox        string      `json:"inbox"`
+	Peers        []string    `json:"peers,omitempty"`
+	Crawl        *bool       `json:"crawl,omitempty"`
+	Transports   []Transport `json:"transports,omitempty"`
+	Capabilities []string    `json:"capabilities,omitempty"`
+	Sig          *Sig        `json:"sig,omitempty"`
 }
 
 // Sign attaches idx.Sig per core §0.1.

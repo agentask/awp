@@ -44,6 +44,7 @@ class FakePeer:
         self.manifests: dict[str, tuple[bytes, manifest_mod.Manifest]] = {}
         self.tool_handlers = {}
         self.sessions: dict[str, str] = {}  # token -> caller principal
+        self.last_tool_call_headers: dict[str, str] = {}
 
     def register_manifest(self, m: manifest_mod.Manifest, priv=None) -> None:
         priv = priv or self.priv
@@ -98,6 +99,7 @@ class FakePeer:
                 return None
 
         headers = {k: v for k, v in request.headers.items()}
+        self.last_tool_call_headers = headers
         result = httpsig.verify_request(
             method=request.method,
             url=str(request.url),
@@ -292,6 +294,48 @@ def test_call_tool_stateless_round_trip() -> None:
     output, session = c.call_tool("tool.example.com#doubler", {"n": 21})
     assert output == {"caller": "caller.example.com", "double": 42}
     assert session is None
+
+
+def test_call_tool_dry_run_header_signed_and_delivered() -> None:
+    """awp-capabilities-v0.1.md §3.1: AWP-Dry-Run is an ordinary AWP-*
+    header — no httpsig change needed to cover it in the signature, and
+    the call succeeds (proving the covered-components list matched what
+    was actually signed)."""
+    caller_priv, caller_pub = identity.generate_keypair()
+    _CALLER_KEY_REGISTRY[("caller.example.com", "ck1")] = caller_pub
+
+    peer = FakePeer("tool.example.com")
+    m = bootstrap.new_manifest(
+        "tool.example.com#doubler", kind="tool", version="1.0.0",
+        description="doubles", state="stateless", endpoint="https://tool.example.com/tools/doubler",
+    )
+    m.capabilities = [manifest_mod.DRY_RUN_CAPABILITY]
+    peer.register_manifest(m)
+    peer.register_tool("tool.example.com#doubler", lambda caller, inp: {"caller": caller, "double": inp["n"] * 2})
+
+    c = make_client_over_peers("caller.example.com", "ck1", caller_priv, {"tool.example.com": peer})
+    output, _ = c.call_tool("tool.example.com#doubler", {"n": 21}, client_mod.CallOptions(dry_run=True))
+
+    assert output == {"caller": "caller.example.com", "double": 42}
+    assert peer.last_tool_call_headers.get("awp-dry-run") == "true"
+
+
+def test_call_tool_without_dry_run_sends_no_header() -> None:
+    caller_priv, caller_pub = identity.generate_keypair()
+    _CALLER_KEY_REGISTRY[("caller.example.com", "ck1")] = caller_pub
+
+    peer = FakePeer("tool.example.com")
+    m = bootstrap.new_manifest(
+        "tool.example.com#doubler", kind="tool", version="1.0.0",
+        description="doubles", state="stateless", endpoint="https://tool.example.com/tools/doubler",
+    )
+    peer.register_manifest(m)
+    peer.register_tool("tool.example.com#doubler", lambda caller, inp: {"double": inp["n"] * 2})
+
+    c = make_client_over_peers("caller.example.com", "ck1", caller_priv, {"tool.example.com": peer})
+    c.call_tool("tool.example.com#doubler", {"n": 21})
+
+    assert "awp-dry-run" not in peer.last_tool_call_headers
 
 
 def test_call_tool_provider_session_lifecycle() -> None:
