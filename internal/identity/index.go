@@ -46,6 +46,13 @@ type Transport struct {
 	Endpoint string `json:"endpoint"`
 }
 
+// Wake is awp-push-v0.1.md §2: an OPTIONAL, unauthenticated liveness hint
+// a sender may POST to after a failed delivery attempt to this domain's
+// Inbox. It never carries envelope content and is not a transport.
+type Wake struct {
+	Endpoint string `json:"endpoint"`
+}
+
 // Index is the signed root document served at /.well-known/awp.json
 // (core §1.1).
 type Index struct {
@@ -59,6 +66,7 @@ type Index struct {
 	Crawl        *bool       `json:"crawl,omitempty"`
 	Transports   []Transport `json:"transports,omitempty"`
 	Capabilities []string    `json:"capabilities,omitempty"`
+	Wake         *Wake       `json:"wake,omitempty"`
 	Sig          *Sig        `json:"sig,omitempty"`
 }
 

@@ -26,6 +26,10 @@ func (noopResolver) ResolveTransport(string, string) (string, bool, error) {
 	return "", false, nil
 }
 
+func (noopResolver) ResolveWake(string) (string, bool, error) {
+	return "", false, nil
+}
+
 func newUnitTestDaemon(t *testing.T, domain string, clk clock.Clock) *Daemon {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(nil)

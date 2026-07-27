@@ -25,6 +25,19 @@ type Sender interface {
 	Send(ctx context.Context, domain string, raw []byte) (status int, retryAfter time.Duration, hasRetryAfter bool, err error)
 }
 
+// WakeNotifier is an optional capability a Sender may also implement:
+// awp-push-v0.1.md §3's best-effort liveness hint, fired after a delivery
+// attempt fails with a network error or 5xx (never on 2xx, never on an
+// honored 429). Attempt discovers this via a type-assertion on Sender
+// rather than folding it into the Sender interface itself, so existing
+// Sender implementations (and tests) need no changes to keep compiling.
+// NotifyWake's outcome is never observed by Attempt — it is fire-and-
+// forget by construction (§3: "MUST NOT influence the outbox state
+// machine in any way").
+type WakeNotifier interface {
+	NotifyWake(ctx context.Context, domain string)
+}
+
 // Config holds the awpd-outbox-v0.1.md §3 tunables this package uses.
 type Config struct {
 	BackoffBase time.Duration // default 1s
@@ -97,8 +110,13 @@ func Attempt(ctx context.Context, st *store.Store, clk clock.Clock, sender Sende
 	}
 
 	domain := identity.DomainOf(env.To)
+	wakeNotifier, _ := sender.(WakeNotifier)
+
 	status, retryAfter, hasRetryAfter, sendErr := sender.Send(ctx, domain, rec.Envelope)
 	if sendErr != nil {
+		if wakeNotifier != nil {
+			wakeNotifier.NotifyWake(ctx, domain)
+		}
 		nextAt := now.Add(fullJitterBackoff(cfg.BackoffBase, cfg.BackoffCap, rec.Attempts))
 		return TransitionRetry, st.MarkRetry(rec.ID, nextAt, sendErr.Error())
 	}
@@ -110,12 +128,20 @@ func Attempt(ctx context.Context, st *store.Store, clk clock.Clock, sender Sende
 	case status == 429:
 		remaining := expiry.Sub(now)
 		if hasRetryAfter && retryAfter <= remaining {
+			// The receiver responded and asked for patience — it is
+			// demonstrably alive, so awp-push-v0.1.md §3 says never wake it.
 			return TransitionRetryAfterHonored, st.MarkRetry(rec.ID, now.Add(retryAfter), "429 Retry-After honored")
+		}
+		if wakeNotifier != nil {
+			wakeNotifier.NotifyWake(ctx, domain)
 		}
 		nextAt := now.Add(fullJitterBackoff(cfg.BackoffBase, cfg.BackoffCap, rec.Attempts))
 		return TransitionRetry, st.MarkRetry(rec.ID, nextAt, "429 without a usable Retry-After, treated as 5xx")
 
 	case status >= 500:
+		if wakeNotifier != nil {
+			wakeNotifier.NotifyWake(ctx, domain)
+		}
 		nextAt := now.Add(fullJitterBackoff(cfg.BackoffBase, cfg.BackoffCap, rec.Attempts))
 		return TransitionRetry, st.MarkRetry(rec.ID, nextAt, statusDetail(status))
 

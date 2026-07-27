@@ -44,6 +44,7 @@ type Resolver interface {
 	inbox.KeyResolver
 	ResolveInbox(domain string) (string, error)
 	ResolveTransport(domain, proto string) (endpoint string, ok bool, err error)
+	ResolveWake(domain string) (endpoint string, ok bool, err error)
 }
 
 // QUICConfig enables the awp/1 transport (awp-quic-v0.1.md). Its absence
@@ -173,6 +174,7 @@ func New(cfg Config) (*Daemon, error) {
 		Client:   cfg.HTTP,
 		InboxURL: cfg.Resolver.ResolveInbox,
 		Clock:    cfg.Clock,
+		WakeURL:  cfg.Resolver.ResolveWake,
 	}
 
 	outboxCfg := cfg.OutboxCfg

@@ -175,6 +175,21 @@ class Transport:
 
 
 @dataclass
+class Wake:
+    """awp-push-v0.1.md §2: an OPTIONAL, unauthenticated liveness hint a
+    sender may POST to (empty body) after a failed delivery attempt to
+    this domain's inbox. Never carries envelope content."""
+    endpoint: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"endpoint": self.endpoint}
+
+    @staticmethod
+    def from_dict(d: dict[str, Any]) -> "Wake":
+        return Wake(endpoint=d["endpoint"])
+
+
+@dataclass
 class Index:
     domain: str
     updated: str
@@ -195,6 +210,10 @@ class Index:
     # same spirit as transports. Absence means "no declared optional
     # capabilities," exactly like absent transports means HTTPS-only.
     capabilities: list[str] | None = None
+    # wake is awp-push-v0.1.md §2: an OPTIONAL wake-notification hint,
+    # distinct in scope from capabilities/transports — this is a liveness
+    # nudge, never a way to carry envelope bytes.
+    wake: Wake | None = None
     sig: Sig | None = None
 
     def to_dict(self, *, with_sig: bool = True) -> dict[str, Any]:
@@ -214,6 +233,8 @@ class Index:
             d["transports"] = [t.to_dict() for t in self.transports]
         if self.capabilities:
             d["capabilities"] = list(self.capabilities)
+        if self.wake is not None:
+            d["wake"] = self.wake.to_dict()
         if with_sig and self.sig is not None:
             d["sig"] = self.sig.to_dict()
         return d
@@ -230,6 +251,7 @@ class Index:
             peers=d.get("peers"), crawl=d.get("crawl"),
             transports=[Transport.from_dict(t) for t in d["transports"]] if d.get("transports") else None,
             capabilities=list(d["capabilities"]) if d.get("capabilities") else None,
+            wake=Wake.from_dict(d["wake"]) if d.get("wake") else None,
             sig=Sig.from_dict(d["sig"]) if d.get("sig") else None,
         )
 

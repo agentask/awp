@@ -68,8 +68,16 @@ type Manifest struct {
 	// Capabilities is awp-capabilities-v0.1.md §3: entity-level feature
 	// declarations. The only token that document defines is "dry-run" —
 	// this entity honors the AWP-Dry-Run sync-call header.
-	Capabilities []string      `json:"capabilities,omitempty"`
-	Sig          *identity.Sig `json:"sig,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	// Changelog is awp-versioning-v0.1.md §1: an informational pointer,
+	// not fetched or verified by anything in this package.
+	Changelog string `json:"changelog,omitempty"`
+	// PreviousSha256 is awp-versioning-v0.1.md §2: the sha256 (hex) of
+	// the immediately-prior signed manifest this one supersedes. Only
+	// verifiable by a holder of the prior document's actual bytes —
+	// this package does not and cannot check it against anything.
+	PreviousSha256 string        `json:"previous_sha256,omitempty"`
+	Sig            *identity.Sig `json:"sig,omitempty"`
 }
 
 // DryRunCapability is the awp-capabilities-v0.1.md §3 token a manifest

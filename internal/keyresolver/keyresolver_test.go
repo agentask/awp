@@ -337,6 +337,73 @@ func TestResolveTransport(t *testing.T) {
 	}
 }
 
+func TestResolveWake(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	const domain = "wake-test.example.com"
+	idx := &identity.Index{
+		Awp: "0.1", Domain: domain, Updated: "2026-07-21T09:00:00.000Z",
+		Keys: []identity.Key{{
+			Kid: "k1", Alg: "ed25519", Pub: base64.RawURLEncoding.EncodeToString(pub),
+			Created: "2026-07-01T00:00:00.000Z",
+		}},
+		Inbox: "http://x/awp/inbox",
+		Wake:  &identity.Wake{Endpoint: "https://wake-test.example.com/awp/wake"},
+	}
+	if err := idx.Sign(priv, "k1"); err != nil {
+		t.Fatalf("sign index: %v", err)
+	}
+	raw, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatalf("marshal index: %v", err)
+	}
+	_, srv := newSwitchableIndexServer(raw)
+	defer srv.Close()
+
+	st := openTestStore(t)
+	r := &HTTPResolver{Store: st, Clock: clock.NewFixed(time.Now()), BaseURL: func(string) string { return srv.URL }}
+
+	endpoint, ok, err := r.ResolveWake(domain)
+	if err != nil {
+		t.Fatalf("ResolveWake: %v", err)
+	}
+	if !ok || endpoint != "https://wake-test.example.com/awp/wake" {
+		t.Fatalf("got endpoint=%q ok=%v, want https://wake-test.example.com/awp/wake/true", endpoint, ok)
+	}
+}
+
+func TestResolveWake_AbsentMeansNotOk(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	const domain = "no-wake-test.example.com"
+	idx := &identity.Index{
+		Awp: "0.1", Domain: domain, Updated: "2026-07-21T09:00:00.000Z",
+		Keys: []identity.Key{{
+			Kid: "k1", Alg: "ed25519", Pub: base64.RawURLEncoding.EncodeToString(pub),
+			Created: "2026-07-01T00:00:00.000Z",
+		}},
+		Inbox: "http://x/awp/inbox",
+	}
+	if err := idx.Sign(priv, "k1"); err != nil {
+		t.Fatalf("sign index: %v", err)
+	}
+	raw, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatalf("marshal index: %v", err)
+	}
+	_, srv := newSwitchableIndexServer(raw)
+	defer srv.Close()
+
+	st := openTestStore(t)
+	r := &HTTPResolver{Store: st, Clock: clock.NewFixed(time.Now()), BaseURL: func(string) string { return srv.URL }}
+
+	_, ok, err := r.ResolveWake(domain)
+	if err != nil {
+		t.Fatalf("ResolveWake: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false when the index declares no wake field, not an error")
+	}
+}
+
 func TestLoad_RejectsBadSelfSignature(t *testing.T) {
 	pub, priv := mustKeypair(t)
 	const domain = "tampered.example.com"

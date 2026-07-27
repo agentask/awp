@@ -48,6 +48,10 @@ func (r *fakeDaemonResolver) ResolveTransport(string, string) (string, bool, err
 	return "", false, nil
 }
 
+func (r *fakeDaemonResolver) ResolveWake(string) (string, bool, error) {
+	return "", false, nil
+}
+
 func mustKeypair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)

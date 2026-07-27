@@ -53,6 +53,10 @@ func (noopResolver) ResolveTransport(string, string) (string, bool, error) {
 	return "", false, nil
 }
 
+func (noopResolver) ResolveWake(string) (string, bool, error) {
+	return "", false, nil
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)

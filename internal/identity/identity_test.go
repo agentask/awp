@@ -163,6 +163,66 @@ func TestIndexCapabilities_SignedAndVerified(t *testing.T) {
 	}
 }
 
+// TestIndexWake_SignedAndVerified confirms the awp-push-v0.1.md §2 Wake
+// field round-trips through sign/verify like any other index field.
+func TestIndexWake_SignedAndVerified(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	idx := &Index{
+		Awp:     "0.1",
+		Domain:  "example.com",
+		Updated: "2026-07-21T09:00:00.000Z",
+		Keys: []Key{
+			{Kid: "2026-07-01", Alg: "ed25519", Pub: encodePub(pub), Created: "2026-07-01T00:00:00.000Z"},
+		},
+		Inbox: "https://example.com/awp/inbox",
+		Wake:  &Wake{Endpoint: "https://example.com/awp/wake"},
+	}
+	if err := idx.Sign(priv, "2026-07-01"); err != nil {
+		t.Fatalf("sign index: %v", err)
+	}
+	if err := idx.VerifySelfSig(); err != nil {
+		t.Fatalf("verify index: %v", err)
+	}
+
+	raw, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var roundTripped Index
+	if err := json.Unmarshal(raw, &roundTripped); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if roundTripped.Wake == nil || roundTripped.Wake.Endpoint != idx.Wake.Endpoint {
+		t.Fatalf("wake did not round-trip: got %+v", roundTripped.Wake)
+	}
+	if err := roundTripped.VerifySelfSig(); err != nil {
+		t.Fatalf("verify round-tripped index: %v", err)
+	}
+
+	roundTripped.Wake = &Wake{Endpoint: "https://evil.example.com/awp/wake"}
+	if err := roundTripped.VerifySelfSig(); err == nil {
+		t.Fatal("expected tampered wake endpoint to invalidate the signature")
+	}
+}
+
+func TestIndexWake_AbsentByDefault(t *testing.T) {
+	idx := &Index{
+		Awp: "0.1", Domain: "example.com", Updated: "2026-07-21T09:00:00.000Z",
+		Inbox: "https://example.com/awp/inbox",
+	}
+	raw, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := d["wake"]; ok {
+		t.Fatal("expected no wake key when unset")
+	}
+}
+
 // --- EARS gate 2: a rotation chain with one broken link rejects. ---
 
 func TestVerifyRotationChain_TableDriven(t *testing.T) {

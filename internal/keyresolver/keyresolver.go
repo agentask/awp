@@ -128,6 +128,21 @@ func (r *HTTPResolver) ResolveTransport(domain, proto string) (endpoint string, 
 	return "", false, nil
 }
 
+// ResolveWake returns domain's advertised wake endpoint (awp-push-v0.1.md
+// §2), if any. ok=false (with a nil error) means the domain declares no
+// `wake` field — absence, not an error; callers fall back to backoff-only
+// retry with no wake hint at all.
+func (r *HTTPResolver) ResolveWake(domain string) (endpoint string, ok bool, err error) {
+	idx, err := r.load(domain, false)
+	if err != nil {
+		return "", false, err
+	}
+	if idx.Wake == nil || idx.Wake.Endpoint == "" {
+		return "", false, nil
+	}
+	return idx.Wake.Endpoint, true, nil
+}
+
 func keyFor(idx *identity.Index, domain, kid string) (ed25519.PublicKey, error) {
 	for _, k := range idx.Keys {
 		if k.Kid != kid {

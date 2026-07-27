@@ -90,6 +90,89 @@ func (f *fakeSender) Send(_ context.Context, _ string, raw []byte) (int, time.Du
 	return r.status, r.retryAfter, r.hasRetryAfter, r.err
 }
 
+// wakeSender embeds fakeSender and additionally implements WakeNotifier,
+// recording every domain it was asked to wake.
+type wakeSender struct {
+	fakeSender
+	woken []string
+}
+
+func (w *wakeSender) NotifyWake(_ context.Context, domain string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.woken = append(w.woken, domain)
+}
+
+// TestAttempt_WakeNotifier_FiresOnUnreachableOnly covers awp-push-v0.1.md
+// §3: NotifyWake fires on network error / 5xx / unhonored-429, and never
+// on 2xx, dead-lettered 4xx, or an honored 429 (the receiver just proved
+// it's alive).
+func TestAttempt_WakeNotifier_FiresOnUnreachableOnly(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	_, priv := mustKeypair(t)
+
+	tests := []struct {
+		name     string
+		response fakeResponse
+		wantWake bool
+	}{
+		{"2xx delivered: no wake", fakeResponse{status: 200}, false},
+		{"network failure: wake", fakeResponse{err: errors.New("connection refused")}, true},
+		{"5xx: wake", fakeResponse{status: 503}, true},
+		{"429 without Retry-After treated as 5xx: wake", fakeResponse{status: 429}, true},
+		{"429 with Retry-After honored: no wake (receiver is alive)", fakeResponse{status: 429, retryAfter: 5 * time.Second, hasRetryAfter: true}, false},
+		{"non-429 4xx dead-letters: no wake", fakeResponse{status: 403}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := openTestStore(t)
+			_, raw := signedEnvelope(t, priv, "k1", "example.com#tool", now, 3600)
+			var env envelope.Envelope
+			_ = json.Unmarshal(raw, &env)
+			if err := st.EnqueueOutbound(env.ID, raw, now); err != nil {
+				t.Fatalf("enqueue: %v", err)
+			}
+			rec, _, _ := st.GetOutbox(env.ID)
+
+			sender := &wakeSender{fakeSender: fakeSender{responses: []fakeResponse{tt.response}}}
+			if _, err := Attempt(context.Background(), st, clock.NewFixed(now), sender, DefaultConfig(), rec); err != nil {
+				t.Fatalf("Attempt: %v", err)
+			}
+
+			gotWake := len(sender.woken) > 0
+			if gotWake != tt.wantWake {
+				t.Fatalf("wake fired = %v, want %v (woken=%v)", gotWake, tt.wantWake, sender.woken)
+			}
+			if gotWake && sender.woken[0] != "example.com" {
+				t.Fatalf("expected wake for domain example.com, got %q", sender.woken[0])
+			}
+		})
+	}
+}
+
+// TestAttempt_PlainSender_NoWakeNotifier confirms a Sender that doesn't
+// implement WakeNotifier (every existing Sender before this feature) is
+// unaffected — Attempt's type assertion must not panic or require it.
+func TestAttempt_PlainSender_NoWakeNotifier(t *testing.T) {
+	st := openTestStore(t)
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	_, priv := mustKeypair(t)
+
+	_, raw := signedEnvelope(t, priv, "k1", "example.com#tool", now, 3600)
+	var env envelope.Envelope
+	_ = json.Unmarshal(raw, &env)
+	if err := st.EnqueueOutbound(env.ID, raw, now); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	rec, _, _ := st.GetOutbox(env.ID)
+
+	sender := &fakeSender{responses: []fakeResponse{{err: errors.New("down")}}}
+	if _, err := Attempt(context.Background(), st, clock.NewFixed(now), sender, DefaultConfig(), rec); err != nil {
+		t.Fatalf("Attempt: %v", err)
+	}
+}
+
 func TestFullJitterBackoff_StaysWithinBounds(t *testing.T) {
 	base := time.Second
 	cap := 300 * time.Second

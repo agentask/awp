@@ -24,6 +24,17 @@ type HTTPSender struct {
 	// time) into the relative time.Duration Sender.Send returns — the
 	// numeric-seconds form needs no clock at all. nil uses clock.Real{}.
 	Clock clock.Clock
+	// WakeURL resolves a domain to its awp-push-v0.1.md §2 wake endpoint.
+	// ok=false means the domain declares none. Production wiring is
+	// internal/keyresolver.HTTPResolver.ResolveWake. A nil WakeURL means
+	// HTTPSender implements no wake capability at all (Attempt's type
+	// assertion on outbox.WakeNotifier still succeeds either way — this
+	// field just makes NotifyWake a no-op when unset).
+	WakeURL func(domain string) (endpoint string, ok bool, err error)
+	// WakeTimeout bounds how long NotifyWake waits for the wake POST
+	// before giving up; it must never block the outbox's own attempt
+	// loop for long. Default 5s.
+	WakeTimeout time.Duration
 }
 
 func (h *HTTPSender) clockOrReal() clock.Clock {
@@ -79,4 +90,40 @@ func (h *HTTPSender) Send(ctx context.Context, domain string, raw []byte) (statu
 		}
 	}
 	return resp.StatusCode, retryAfter, hasRetryAfter, nil
+}
+
+// NotifyWake implements outbox.WakeNotifier (awp-push-v0.1.md §3): an
+// unsigned, empty-body, best-effort POST to domain's declared wake
+// endpoint, if any. Errors and non-2xx responses are deliberately
+// discarded — per spec, the wake POST's outcome MUST NOT influence the
+// outbox state machine, so there is nothing for a caller to do with them.
+func (h *HTTPSender) NotifyWake(ctx context.Context, domain string) {
+	if h.WakeURL == nil {
+		return
+	}
+	endpoint, ok, err := h.WakeURL(domain)
+	if err != nil || !ok || endpoint == "" {
+		return
+	}
+
+	timeout := h.WakeTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	wakeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(wakeCtx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return
+	}
+	client := h.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
 }

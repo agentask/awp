@@ -2,6 +2,7 @@ package outbox
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -93,6 +94,63 @@ func TestHTTPSender_Send_NumericRetryAfterStillWorks(t *testing.T) {
 	if !hasRetryAfter || retryAfter != 30*time.Second {
 		t.Fatalf("got (%v, %v), want (30s, true)", retryAfter, hasRetryAfter)
 	}
+}
+
+func TestHTTPSender_NotifyWake_POSTsEmptyBodyToDeclaredEndpoint(t *testing.T) {
+	var gotMethod string
+	var gotBodyLen int
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		body, _ := io.ReadAll(r.Body)
+		gotBodyLen = len(body)
+		w.WriteHeader(http.StatusOK)
+		close(done)
+	}))
+	defer srv.Close()
+
+	sender := &HTTPSender{WakeURL: func(string) (string, bool, error) { return srv.URL, true, nil }}
+	sender.NotifyWake(context.Background(), "receiver.example")
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("wake endpoint was never called")
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotBodyLen != 0 {
+		t.Fatalf("body length = %d, want 0 (empty body)", gotBodyLen)
+	}
+}
+
+func TestHTTPSender_NotifyWake_NoEndpointDeclared_NeverCalls(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sender := &HTTPSender{WakeURL: func(string) (string, bool, error) { return "", false, nil }}
+	sender.NotifyWake(context.Background(), "receiver.example")
+	if called {
+		t.Fatal("expected no request when the domain declares no wake endpoint")
+	}
+}
+
+func TestHTTPSender_NotifyWake_NilWakeURL_NeverPanics(t *testing.T) {
+	sender := &HTTPSender{}
+	sender.NotifyWake(context.Background(), "receiver.example") // must not panic
+}
+
+func TestHTTPSender_NotifyWake_UnreachableEndpoint_Ignored(t *testing.T) {
+	sender := &HTTPSender{
+		WakeURL:     func(string) (string, bool, error) { return "http://127.0.0.1:1", true, nil },
+		WakeTimeout: 200 * time.Millisecond,
+	}
+	sender.NotifyWake(context.Background(), "receiver.example") // must not panic or block long
 }
 
 func TestHTTPSender_Send_MalformedRetryAfterNotHonored(t *testing.T) {

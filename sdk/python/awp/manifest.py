@@ -135,6 +135,14 @@ class Manifest:
     # declarations (e.g. DRY_RUN_CAPABILITY) — distinct in scope from
     # Index.capabilities, which is domain-level.
     capabilities: list[str] | None = None
+    # changelog is awp-versioning-v0.1.md §1: an informational pointer,
+    # never fetched or verified by this module.
+    changelog: str = ""
+    # previous_sha256 is awp-versioning-v0.1.md §2: the sha256 (hex) of
+    # the immediately-prior signed manifest this one supersedes. Only
+    # verifiable by a holder of the prior document's actual bytes — this
+    # module does not and cannot check it against anything.
+    previous_sha256: str = ""
     sig: identity.Sig | None = None
 
     def has_capability(self, capability: str) -> bool:
@@ -160,6 +168,10 @@ class Manifest:
             d["environment"] = self.environment
         if self.capabilities:
             d["capabilities"] = list(self.capabilities)
+        if self.changelog:
+            d["changelog"] = self.changelog
+        if self.previous_sha256:
+            d["previous_sha256"] = self.previous_sha256
         if with_sig and self.sig is not None:
             d["sig"] = self.sig.to_dict()
         return d
@@ -177,6 +189,8 @@ class Manifest:
             inbox=d.get("inbox"),
             environment=d.get("environment", ""),
             capabilities=list(d["capabilities"]) if d.get("capabilities") else None,
+            changelog=d.get("changelog", ""),
+            previous_sha256=d.get("previous_sha256", ""),
             sig=identity.Sig.from_dict(d["sig"]) if d.get("sig") else None,
         )
 

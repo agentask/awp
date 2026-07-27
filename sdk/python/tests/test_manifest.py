@@ -56,6 +56,39 @@ def test_capabilities_round_trip_through_json() -> None:
     assert round_tripped.has_capability(manifest.DRY_RUN_CAPABILITY)
 
 
+def test_versioning_fields_sign_verify_and_round_trip() -> None:
+    priv, pub = identity.generate_keypair()
+    m = make_manifest(
+        version="1.3.0",
+        changelog="https://example.com/awp/changelogs/generate-invoice.html",
+        previous_sha256="aa" * 32,
+    )
+    m.sign(priv, "k1")
+    m.verify(pub)
+
+    tampered = make_manifest(
+        version="1.3.0",
+        changelog="https://example.com/awp/changelogs/generate-invoice.html",
+        previous_sha256="bb" * 32,
+    )
+    tampered.sig = m.sig
+    with pytest.raises(identity.BadSignatureError):
+        tampered.verify(pub)
+
+    raw = json.dumps(m.to_dict()).encode()
+    round_tripped = manifest.Manifest.from_dict(json.loads(raw))
+    assert round_tripped.changelog == m.changelog
+    assert round_tripped.previous_sha256 == m.previous_sha256
+    round_tripped.verify(pub)
+
+
+def test_versioning_fields_absent_by_default() -> None:
+    m = make_manifest()
+    d = m.to_dict(with_sig=False)
+    assert "changelog" not in d
+    assert "previous_sha256" not in d
+
+
 def test_pricing_and_inbox_always_present_null() -> None:
     m = make_manifest()
     d = m.to_dict(with_sig=False)

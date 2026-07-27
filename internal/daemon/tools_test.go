@@ -55,6 +55,10 @@ func (r *toolFakeResolver) ResolveTransport(string, string) (string, bool, error
 	return "", false, nil
 }
 
+func (r *toolFakeResolver) ResolveWake(string) (string, bool, error) {
+	return "", false, nil
+}
+
 // newToolTestDaemon builds a Daemon backed by a resolver the test can add
 // caller keys to, for exercising the tool-serving endpoint directly.
 func newToolTestDaemon(t *testing.T, domain string, clk clock.Clock) (*Daemon, *toolFakeResolver) {

@@ -105,6 +105,40 @@ def test_index_capabilities_absent_by_default() -> None:
     assert "capabilities" not in idx.to_dict(with_sig=False)
 
 
+def test_index_wake_signed_and_tamper_detected() -> None:
+    """awp-push-v0.1.md §2: wake is inside the signed document, not
+    bolted on beside it."""
+    import json
+
+    priv, pub = identity.generate_keypair()
+    idx = identity.Index(
+        domain="example.local", updated=identity.now_rfc3339_milli(),
+        keys=[identity.new_key(pub, "k1")], inbox="http://127.0.0.1:8001/awp/inbox",
+        wake=identity.Wake(endpoint="https://example.local/awp/wake"),
+    )
+    idx.sign(priv, "k1")
+    idx.verify_self_sig()
+
+    raw = json.dumps(idx.to_dict()).encode()
+    round_tripped = identity.Index.from_dict(json.loads(raw))
+    assert round_tripped.wake == identity.Wake(endpoint="https://example.local/awp/wake")
+    round_tripped.verify_self_sig()
+
+    round_tripped.wake = identity.Wake(endpoint="https://evil.local/awp/wake")
+    with pytest.raises(identity.BadSignatureError):
+        round_tripped.verify_self_sig()
+
+
+def test_index_wake_absent_by_default() -> None:
+    priv, pub = identity.generate_keypair()
+    idx = identity.Index(
+        domain="example.local", updated=identity.now_rfc3339_milli(),
+        keys=[identity.new_key(pub, "k1")], inbox="",
+    )
+    assert idx.wake is None
+    assert "wake" not in idx.to_dict(with_sig=False)
+
+
 def test_index_round_trip_through_json_preserves_signature() -> None:
     import json
 

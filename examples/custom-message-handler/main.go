@@ -91,6 +91,10 @@ func (r *httpResolver) ResolveTransport(domain, proto string) (string, bool, err
 	return "", false, nil
 }
 
+func (r *httpResolver) ResolveWake(string) (string, bool, error) {
+	return "", false, nil
+}
+
 type peer struct {
 	domain string
 	daemon *daemon.Daemon

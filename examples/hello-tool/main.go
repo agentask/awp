@@ -58,6 +58,10 @@ func (r *staticResolver) ResolveTransport(string, string) (string, bool, error) 
 	return "", false, nil
 }
 
+func (r *staticResolver) ResolveWake(string) (string, bool, error) {
+	return "", false, nil
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)

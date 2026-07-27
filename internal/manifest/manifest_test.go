@@ -98,6 +98,63 @@ func TestManifestCapabilitiesAndEnvironment(t *testing.T) {
 	}
 }
 
+// TestManifestVersioningFields covers awp-versioning-v0.1.md §1/§2:
+// Changelog and PreviousSha256 sign, verify, and tamper-detect exactly
+// like any other manifest field.
+func TestManifestVersioningFields(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	m := testManifest()
+	m.Version = "1.3.0"
+	m.Changelog = "https://example.com/awp/changelogs/generate-invoice.html"
+	m.PreviousSha256 = "aa" + hex.EncodeToString(make([]byte, 31))
+
+	if err := m.Sign(priv, "2026-07-01"); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if err := m.Verify(pub); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+
+	tampered := *m
+	tampered.PreviousSha256 = "bb" + hex.EncodeToString(make([]byte, 31))
+	if err := tampered.Verify(pub); err == nil {
+		t.Fatal("expected a tampered previous_sha256 to invalidate the signature")
+	}
+
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var roundTripped Manifest
+	if err := json.Unmarshal(raw, &roundTripped); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if roundTripped.Changelog != m.Changelog || roundTripped.PreviousSha256 != m.PreviousSha256 {
+		t.Fatalf("versioning fields did not round-trip through JSON: got %+v", roundTripped)
+	}
+	if err := roundTripped.Verify(pub); err != nil {
+		t.Fatalf("verify round-tripped: %v", err)
+	}
+}
+
+func TestManifestVersioningFields_AbsentByDefault(t *testing.T) {
+	m := testManifest()
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := d["changelog"]; ok {
+		t.Fatal("expected no changelog key when unset")
+	}
+	if _, ok := d["previous_sha256"]; ok {
+		t.Fatal("expected no previous_sha256 key when unset")
+	}
+}
+
 func TestManifestEnvironment_DefaultIsProduction(t *testing.T) {
 	m := testManifest()
 	if m.Environment != "" {
