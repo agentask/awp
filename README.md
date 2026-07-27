@@ -87,6 +87,13 @@ DNS, no real certificates, no setup beyond `go run`:
 [`portable-wasm-tool`](examples/portable-wasm-tool). Start with
 [`examples/README.md`](examples/README.md).
 
+[`agents/python/`](agents/python) is a different kind of example: two
+real [Google ADK](https://github.com/google/adk-python) agents, in
+Python (managed with `uv`), talking to each other over AWP — a from-scratch
+`pyawp` implementation of the same signing/envelope/inbox logic the Go
+code above implements, verified to actually interoperate with it (not
+just with itself) in `agents/python/scripts/crosscheck_go.py`.
+
 ## v0.2 backlog (deliberately out of scope for v0.1)
 
 Multiparty threads · store-and-forward relays · WASM component-model (WIT)

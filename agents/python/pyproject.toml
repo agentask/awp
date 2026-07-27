@@ -1,0 +1,15 @@
+[project]
+name = "awp-adk-agents"
+version = "0.1.0"
+description = "Two google-adk agents that talk to each other over AWP (see ../../README.md)"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=49.0.0",
+    "fastapi>=0.115",
+    "google-adk>=2.5.0",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.2",
+    "python-ulid>=4.0.1",
+    "rfc8785>=0.1.4",
+    "uvicorn[standard]>=0.51.0",
+]
