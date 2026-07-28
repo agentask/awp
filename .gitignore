@@ -17,3 +17,6 @@ awpd-data/
 # OS / editor
 .DS_Store
 *.swp
+
+# Marketing/launch drafts — not project docs, kept local-only
+posts/
