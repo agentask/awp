@@ -135,6 +135,52 @@ func TestSendEnvelope_DeliversToRealDaemonInbox(t *testing.T) {
 	t.Fatal("recipient never processed the delivered envelope")
 }
 
+// TestSendStreamChunk_DeliversCorrectlyShapedBodyToRealDaemon covers
+// awp-streaming-v0.1.md §2: stream_id/seq/final/data land exactly as
+// specified, and the receiving daemon's own reassembly (internal/daemon,
+// exercised for real here, not mocked) delivers it in order.
+func TestSendStreamChunk_DeliversCorrectlyShapedBodyToRealDaemon(t *testing.T) {
+	senderPub, senderPriv := mustKeypair(t)
+
+	recvResolver := &fakeDaemonResolver{}
+	recvResolver.add("sender.example.com", "sk1", senderPub)
+	recvDaemon, recvSrv := newTestDaemon(t, "recipient.example.com", recvResolver)
+
+	var got []json.RawMessage
+	recvDaemon.StreamChunkHandler = func(_ context.Context, _, _ string, _ int, _ bool, data json.RawMessage) error {
+		got = append(got, data)
+		return nil
+	}
+
+	c := clientForDaemon("sender.example.com", senderPriv, "sk1", map[string]*httptest.Server{
+		"recipient.example.com": recvSrv,
+	})
+
+	thread := envelope.NewID()
+	streamID := envelope.NewID()
+	sentEnv, err := c.SendStreamChunk(context.Background(), "reply", "recipient.example.com#agent", thread, nil, streamID, 0, true, json.RawMessage(`{"text":"hi"}`), 3600)
+	if err != nil {
+		t.Fatalf("SendStreamChunk: %v", err)
+	}
+	if sentEnv.Kind != "reply" {
+		t.Fatalf("Kind = %q, want reply", sentEnv.Kind)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := recvDaemon.ProcessInboundOnce(context.Background()); err != nil {
+			t.Fatalf("ProcessInboundOnce: %v", err)
+		}
+		if len(got) > 0 {
+			if string(got[0]) != `{"text":"hi"}` {
+				t.Fatalf("delivered data = %s, want {\"text\":\"hi\"}", got[0])
+			}
+			return
+		}
+	}
+	t.Fatal("recipient never delivered the reassembled chunk to StreamChunkHandler")
+}
+
 func TestSendEnvelope_RejectsOversizeTTL(t *testing.T) {
 	pub, priv := mustKeypair(t)
 	_ = pub

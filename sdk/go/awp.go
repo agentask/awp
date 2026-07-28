@@ -271,6 +271,37 @@ func (c *Client) SendEnvelope(ctx context.Context, kind, to, thread string, inRe
 	return e, nil
 }
 
+// streamChunkBody is awp-streaming-v0.1.md §2's body shape.
+type streamChunkBody struct {
+	Type     string          `json:"type"`
+	StreamID string          `json:"stream_id"`
+	Seq      int             `json:"seq"`
+	Final    bool            `json:"final"`
+	Data     json.RawMessage `json:"data"`
+}
+
+// SendStreamChunk builds, signs, and delivers one awp-streaming-v0.1.md
+// §2 stream_chunk envelope — a thin convenience wrapper over
+// SendEnvelope with the correct body shape, nothing more. This SDK does
+// not reassemble streams on the receiving side (it has no persistent
+// state at all, per this package's own single-delivery-attempt design
+// above); a receiving daemon (internal/daemon's Config.StreamChunkHandler)
+// does that buffering/gap-filling.
+//
+// kind is typically "reply" (awp-streaming-v0.1.md §2) — pass "message"
+// if a caller's protocol design calls for that instead. stream_id should
+// be a fresh envelope.NewID() for seq 0 of a new stream, then the SAME
+// value for every subsequent chunk of that stream. seq is 0-based and
+// MUST strictly increase per stream_id. final MUST be true on exactly
+// one chunk: the last one.
+func (c *Client) SendStreamChunk(ctx context.Context, kind, to, thread string, inReplyTo *string, streamID string, seq int, final bool, data json.RawMessage, ttl int) (*envelope.Envelope, error) {
+	body, err := json.Marshal(streamChunkBody{Type: "stream_chunk", StreamID: streamID, Seq: seq, Final: final, Data: data})
+	if err != nil {
+		return nil, fmt.Errorf("awp: marshal stream_chunk body: %w", err)
+	}
+	return c.SendEnvelope(ctx, kind, to, thread, inReplyTo, body, ttl)
+}
+
 // CallOptions configures an optional sync-call session/delegation.
 type CallOptions struct {
 	// Session is a previously-issued AWP-Session token (core §1.3). Leave
