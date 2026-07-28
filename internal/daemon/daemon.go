@@ -122,7 +122,36 @@ type Config struct {
 	// behavior that demonstrates the envelope-kind vocabulary end to end.
 	// A real agent sets this to its own logic; see docs/agent-guide.md.
 	MessageHandler MessageHandler
+	// DisableStreaming makes this daemon behave as an implementation that
+	// has NOT adopted awp-streaming-v0.1.md: a stream_chunk body is
+	// rejected with error(unsupported_body) per core §2.3/§9 instead of
+	// being buffered/reassembled, and the index never advertises the
+	// "awp-streaming-v0.1" capability. Default false — the reference
+	// daemon adopts streaming.
+	DisableStreaming bool
+	// StreamChunkHandler, if set, is invoked once per stream_chunk that
+	// becomes deliverable — in order, with no gaps (awp-streaming-v0.1.md
+	// §4) — after this daemon's own reassembly buffering. nil means
+	// chunks are still correctly reassembled (queryable after the fact via
+	// Store.ThreadMessages, filtered by body.stream_id and sorted by
+	// body.seq) but nothing is pushed to the application layer.
+	StreamChunkHandler StreamChunkHandler
+	// StreamBufferMaxAge bounds how long an incomplete stream's reassembly
+	// buffer is kept before RunGCOnce reclaims it as abandoned
+	// (awp-streaming-v0.1.md §5). 0 uses DefaultStreamBufferMaxAge (24h).
+	StreamBufferMaxAge time.Duration
 }
+
+// StreamChunkHandler processes one reassembled, in-order, gap-free
+// stream_chunk (awp-streaming-v0.1.md §4) — the streaming counterpart of
+// MessageHandler. Returning an error surfaces it from ProcessInboundOnce
+// but does not stop the queue from draining.
+type StreamChunkHandler func(ctx context.Context, thread, streamID string, seq int, final bool, data json.RawMessage) error
+
+// DefaultStreamBufferMaxAge is how long an incomplete stream's
+// reassembly buffer survives before being treated as abandoned
+// (awp-streaming-v0.1.md §5).
+const DefaultStreamBufferMaxAge = 24 * time.Hour
 
 // SendFunc sends one envelope in response to whatever inbound `message` a
 // MessageHandler is currently processing. to/thread/in_reply_to are
@@ -156,6 +185,10 @@ type Daemon struct {
 	OutboxCfg      outbox.Config
 	DeadRetention  time.Duration
 	MessageHandler MessageHandler
+
+	DisableStreaming   bool
+	StreamChunkHandler StreamChunkHandler
+	StreamBufferMaxAge time.Duration
 
 	mu    sync.Mutex
 	index *identity.Index
@@ -192,6 +225,12 @@ func New(cfg Config) (*Daemon, error) {
 			Created: cfg.Clock.Now().UTC().Format(RFC3339Milli),
 		}},
 	}
+	if !cfg.DisableStreaming {
+		// awp-capabilities-v0.1.md §1: advertise adoption of the
+		// streaming extension so a caller (or the conformance CLI) can
+		// discover it from the index instead of finding out by trying.
+		idx.Capabilities = []string{"awp-streaming-v0.1"}
+	}
 	if err := idx.Sign(cfg.Priv, cfg.Kid); err != nil {
 		return nil, fmt.Errorf("daemon: sign initial index: %w", err)
 	}
@@ -217,17 +256,25 @@ func New(cfg Config) (*Daemon, error) {
 		deadRetention = DefaultDeadRetention
 	}
 
+	streamBufferMaxAge := cfg.StreamBufferMaxAge
+	if streamBufferMaxAge == 0 {
+		streamBufferMaxAge = DefaultStreamBufferMaxAge
+	}
+
 	d := &Daemon{
-		Domain:         cfg.Domain,
-		Kid:            cfg.Kid,
-		priv:           cfg.Priv,
-		Store:          cfg.Store,
-		Clock:          cfg.Clock,
-		Gate:           gate,
-		OutboxCfg:      outboxCfg,
-		DeadRetention:  deadRetention,
-		MessageHandler: cfg.MessageHandler,
-		index:          idx,
+		Domain:             cfg.Domain,
+		Kid:                cfg.Kid,
+		priv:               cfg.Priv,
+		Store:              cfg.Store,
+		Clock:              cfg.Clock,
+		Gate:               gate,
+		OutboxCfg:          outboxCfg,
+		DeadRetention:      deadRetention,
+		MessageHandler:     cfg.MessageHandler,
+		DisableStreaming:   cfg.DisableStreaming,
+		StreamChunkHandler: cfg.StreamChunkHandler,
+		StreamBufferMaxAge: streamBufferMaxAge,
+		index:              idx,
 	}
 
 	if cfg.QUIC != nil {
@@ -418,17 +465,21 @@ func (d *Daemon) RunOutboxOnce(ctx context.Context) (int, error) {
 // A real deployment calls this on a slow cadence (e.g. hourly, per
 // awpd-store §2's "GC: hourly cursor scan"); tests call it directly
 // against an injected clock.
-func (d *Daemon) RunGCOnce() (seenDeleted, deadDeleted int, err error) {
+func (d *Daemon) RunGCOnce() (seenDeleted, deadDeleted, streamBuffersDeleted int, err error) {
 	now := d.Clock.Now()
 	seenDeleted, err = d.Store.GCSeen(now)
 	if err != nil {
-		return seenDeleted, 0, fmt.Errorf("daemon: gc seen: %w", err)
+		return seenDeleted, 0, 0, fmt.Errorf("daemon: gc seen: %w", err)
 	}
 	deadDeleted, err = d.Store.GCDeadLetters(now, d.DeadRetention)
 	if err != nil {
-		return seenDeleted, deadDeleted, fmt.Errorf("daemon: gc dead letters: %w", err)
+		return seenDeleted, deadDeleted, 0, fmt.Errorf("daemon: gc dead letters: %w", err)
 	}
-	return seenDeleted, deadDeleted, nil
+	streamBuffersDeleted, err = d.Store.GCStreamBuffers(now, d.StreamBufferMaxAge)
+	if err != nil {
+		return seenDeleted, deadDeleted, streamBuffersDeleted, fmt.Errorf("daemon: gc stream buffers: %w", err)
+	}
+	return seenDeleted, deadDeleted, streamBuffersDeleted, nil
 }
 
 // ProcessInboundOnce claims and processes every currently-queued inbound
@@ -470,6 +521,10 @@ func (d *Daemon) processOne(ctx context.Context, rec store.InboundRecord) error 
 	}
 	if err := d.Store.RecordThreadEnvelope(env.Thread, env.From, env.ID, rec.Envelope, ts, env.Kind == "close", env.From); err != nil {
 		return fmt.Errorf("daemon: record thread state for %s: %w", rec.ID, err)
+	}
+
+	if handled, err := d.tryProcessStreamChunk(ctx, &env); handled {
+		return err
 	}
 
 	if env.Kind != "message" {

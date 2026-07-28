@@ -49,6 +49,8 @@ type runConfig struct {
 	quicDialTimeout            time.Duration
 	ws                         bool
 	wsDialTimeout              time.Duration
+	disableStreaming           bool
+	streamBufferMaxAge         time.Duration
 	demoEchoTool               bool
 	deadRetention              time.Duration
 }
@@ -68,6 +70,8 @@ func main() {
 	flag.DurationVar(&cfg.quicDialTimeout, "quic-dial-timeout", 5*time.Second, "timeout dialing a peer's awp/1 endpoint before falling back to HTTPS")
 	flag.BoolVar(&cfg.ws, "ws", false, "enable awp-ws/1 (WebSocket) transport; false disables it and advertises HTTPS(/awp-1)-only, per awp-ws §2 — needs no separate address, it shares -addr's listener")
 	flag.DurationVar(&cfg.wsDialTimeout, "ws-dial-timeout", 5*time.Second, "timeout dialing a peer's awp-ws/1 endpoint before falling back to the next transport")
+	flag.BoolVar(&cfg.disableStreaming, "disable-streaming", false, "reject stream_chunk bodies with error(unsupported_body) instead of reassembling them, and stop advertising the \"awp-streaming-v0.1\" capability — simulates an implementation that has not adopted awp-streaming-v0.1.md (core §2.3/§9); false (adopt streaming) is the default")
+	flag.DurationVar(&cfg.streamBufferMaxAge, "stream-buffer-max-age", daemon.DefaultStreamBufferMaxAge, "how long an incomplete stream's reassembly buffer is kept before hourly GC reclaims it as abandoned (awp-streaming-v0.1.md §5)")
 	flag.BoolVar(&cfg.demoEchoTool, "demo-echo-tool", false, "register a demo kind:tool entity (\"echo\") that returns its verified caller + input — for trying out sync tool calls; not registered by default")
 	flag.DurationVar(&cfg.deadRetention, "dead-retention", daemon.DefaultDeadRetention, "how long dead-lettered outbound envelopes are kept before hourly GC deletes them (awpd-outbox §3 outbox.dead_retention)")
 	flag.Parse()
@@ -133,14 +137,16 @@ func run(cfg runConfig) error {
 	}
 
 	daemonCfg := daemon.Config{
-		Domain:        cfg.domain,
-		Kid:           cfg.kid,
-		Priv:          priv,
-		Store:         st,
-		Clock:         clock.Real{},
-		Resolver:      resolver,
-		OutboxCfg:     outbox.DefaultConfig(),
-		DeadRetention: cfg.deadRetention,
+		Domain:             cfg.domain,
+		Kid:                cfg.kid,
+		Priv:               priv,
+		Store:              st,
+		Clock:              clock.Real{},
+		Resolver:           resolver,
+		OutboxCfg:          outbox.DefaultConfig(),
+		DeadRetention:      cfg.deadRetention,
+		DisableStreaming:   cfg.disableStreaming,
+		StreamBufferMaxAge: cfg.streamBufferMaxAge,
 	}
 	if cfg.quicAddr != "" {
 		clientTLS := &tls.Config{NextProtos: []string{"awp/1"}}
@@ -315,13 +321,13 @@ func runGCTicker(ctx context.Context, d *daemon.Daemon, interval time.Duration) 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			seenDeleted, deadDeleted, err := d.RunGCOnce()
+			seenDeleted, deadDeleted, streamBuffersDeleted, err := d.RunGCOnce()
 			if err != nil {
 				log.Printf("awpd: gc error: %v", err)
 				continue
 			}
-			if seenDeleted > 0 || deadDeleted > 0 {
-				log.Printf("awpd: gc: %d seen entries, %d dead letters deleted", seenDeleted, deadDeleted)
+			if seenDeleted > 0 || deadDeleted > 0 || streamBuffersDeleted > 0 {
+				log.Printf("awpd: gc: %d seen entries, %d dead letters, %d abandoned stream buffers deleted", seenDeleted, deadDeleted, streamBuffersDeleted)
 			}
 		}
 	}

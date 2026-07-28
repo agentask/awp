@@ -239,6 +239,41 @@ class _SenderAsPeer:
         return httpx.Response(404)
 
 
+def test_send_stream_chunk_delivers_correctly_shaped_body() -> None:
+    """awp-streaming-v0.1.md §2: stream_id/seq/final/data land exactly as
+    specified, and kind defaults to "reply"."""
+    sender_priv, _ = identity.generate_keypair()
+    peer = FakePeer("recipient.example.com")
+    c = make_client_over_peers("sender.example.com", "sk1", sender_priv, {"recipient.example.com": peer})
+
+    thread = envelope_mod.new_id()
+    stream_id = envelope_mod.new_id()
+    sent = c.send_stream_chunk(
+        "recipient.example.com#agent", thread, None, stream_id, 0, False, {"text": "hello"},
+    )
+
+    assert sent.kind == "reply"
+    assert len(peer.received_envelopes) == 1
+    received = peer.received_envelopes[0]
+    assert received.body == {
+        "type": "stream_chunk", "stream_id": stream_id, "seq": 0, "final": False,
+        "data": {"text": "hello"},
+    }
+
+
+def test_send_stream_chunk_accepts_explicit_kind() -> None:
+    sender_priv, _ = identity.generate_keypair()
+    peer = FakePeer("recipient.example.com")
+    c = make_client_over_peers("sender.example.com", "sk1", sender_priv, {"recipient.example.com": peer})
+
+    sent = c.send_stream_chunk(
+        "recipient.example.com#agent", envelope_mod.new_id(), None, envelope_mod.new_id(),
+        3, True, {"n": 3}, kind="message",
+    )
+    assert sent.kind == "message"
+    assert peer.received_envelopes[0].body["final"] is True
+
+
 def test_send_envelope_rejects_ttl_out_of_bounds() -> None:
     priv, _ = identity.generate_keypair()
     c = make_client_over_peers("sender.example.com", "sk1", priv, {})

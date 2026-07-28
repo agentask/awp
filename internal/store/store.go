@@ -33,6 +33,9 @@ var (
 	bucketKeysCache   = []byte("keys_cache")
 )
 
+// bucketStreamMeta and bucketStreamChunks (awp-streaming-v0.1.md §4/§6)
+// are declared in streams.go, alongside the logic that uses them.
+
 var metaSchemaKey = []byte("schema")
 
 // Store wraps a single bbolt database file (awpd-store §1: one DB file,
@@ -75,6 +78,7 @@ func (s *Store) init() error {
 			bucketMeta, bucketSeen, bucketInq, bucketInqActive,
 			bucketOutbox, bucketOutboxSched,
 			bucketThreads, bucketThreadMsgs, bucketKeysCache,
+			bucketStreamMeta, bucketStreamChunks,
 		} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return fmt.Errorf("store: create bucket %s: %w", b, err)

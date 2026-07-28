@@ -237,6 +237,42 @@ class Client:
             )
         return e
 
+    def send_stream_chunk(
+        self,
+        to: str,
+        thread: str,
+        in_reply_to: str | None,
+        stream_id: str,
+        seq: int,
+        final: bool,
+        data: Any,
+        kind: str = "reply",
+        ttl: int = 0,
+    ) -> envelope_mod.Envelope:
+        """Builds, signs, and delivers one awp-streaming-v0.1.md §2
+        stream_chunk envelope — a thin convenience wrapper over
+        send_envelope with the correct body shape, nothing more.
+
+        This SDK is deliberately stateless (see this module's own doc
+        comment) and does not attempt reassembly on the sending side —
+        there is nothing to reassemble here, only chunks to produce in
+        order. A receiving daemon (internal/daemon, this repo's Go
+        reference implementation) does the buffering/gap-filling; this
+        method's only job is to shape the wire body correctly and reuse
+        send_envelope's signing/delivery, exactly like every other body
+        type this SDK sends.
+
+        kind is "reply" by default (awp-streaming-v0.1.md §2: "typically
+        reply") — pass "message" explicitly if a caller's protocol design
+        calls for that instead; this method takes no position on it.
+        stream_id should be a fresh ULID (envelope.new_id()) for seq 0 of
+        a new stream, then the SAME value for every subsequent chunk of
+        that stream. seq is 0-based and MUST strictly increase per
+        stream_id. final MUST be true on exactly one chunk: the last one.
+        """
+        body = {"type": "stream_chunk", "stream_id": stream_id, "seq": seq, "final": final, "data": data}
+        return self.send_envelope(kind, to, thread, in_reply_to, body, ttl=ttl)
+
     def call_tool(
         self,
         tool_principal: str,

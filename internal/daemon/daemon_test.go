@@ -285,7 +285,7 @@ func TestRunGCOnce_DeletesExpiredSeenAndPastRetentionDeadLetters(t *testing.T) {
 		t.Fatalf("MarkDead: %v", err)
 	}
 
-	seenDeleted, deadDeleted, err := d.RunGCOnce()
+	seenDeleted, deadDeleted, _, err := d.RunGCOnce()
 	if err != nil {
 		t.Fatalf("RunGCOnce: %v", err)
 	}
