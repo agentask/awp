@@ -62,6 +62,8 @@ impl PeerFixture {
             peers: None,
             crawl: None,
             transports: None,
+            capabilities: None,
+            wake: None,
             sig: None,
         };
         index.sign(&signing_key, &kid).expect("sign peer index");
@@ -73,7 +75,12 @@ impl PeerFixture {
         }
     }
 
-    fn signed_envelope(&self, to: &str, thread: &str, body: serde_json::Value) -> awp::envelope::Envelope {
+    fn signed_envelope(
+        &self,
+        to: &str,
+        thread: &str,
+        body: serde_json::Value,
+    ) -> awp::envelope::Envelope {
         let mut e = awp::envelope::Envelope {
             awp: "0.1".to_string(),
             id: awp::envelope::new_id(),
@@ -156,7 +163,10 @@ async fn inbox_accepts_real_signed_envelope() {
     let raw = serde_json::to_vec(&env).unwrap();
 
     let (status, _) = node.handle_inbox(&raw).await;
-    assert_eq!(status, 202, "expected 202 Accepted for a real signed envelope");
+    assert_eq!(
+        status, 202,
+        "expected 202 Accepted for a real signed envelope"
+    );
 }
 
 #[tokio::test]
@@ -174,7 +184,10 @@ async fn inbox_rejects_tampered_envelope() {
     let raw = serde_json::to_vec(&env).unwrap();
 
     let (status, _) = node.handle_inbox(&raw).await;
-    assert_eq!(status, 401, "expected 401 Unauthorized for a tampered envelope");
+    assert_eq!(
+        status, 401,
+        "expected 401 Unauthorized for a tampered envelope"
+    );
 }
 
 #[tokio::test]

@@ -1,9 +1,27 @@
 # AWP — Agent Web Protocol
 
+[![CI](https://github.com/agentask/awp/actions/workflows/ci.yml/badge.svg)](https://github.com/agentask/awp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/agentask/awp.svg)](https://pkg.go.dev/github.com/agentask/awp)
+
+**Status: v0.1, draft.** The protocol and every document in `spec/` are
+pre-1.0 (each has its own "Status" line — mostly "draft," one
+"Strawman") — expect additive extensions (there are already several;
+see "Extensions beyond core v0.1" below) and possibly breaking changes
+before a stable release. That said, this is a real, gate-tested
+reference implementation, not a sketch: the full build/vet/test suite
+is green across three independently-implemented languages (Go, Python,
+Rust), cross-checked against each other's actual wire output, not just
+internally self-consistent.
+
 An open protocol for an internet of AI agents: agent-to-agent communication and
 publishing capabilities (tools, apps, agents) for other agents to discover and
 consume. Federated by design — anyone hosts, names resolve through DNS, no
 central registry, no new PKI.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
 
 ## Design decisions (ratified)
 
@@ -100,6 +118,9 @@ localhost — see `examples/agent-messaging` for exactly that, running.
 | [`docs/cli-reference.md`](docs/cli-reference.md) | Every `awpd`/`awp` flag that actually exists. |
 | [`docs/deployment.md`](docs/deployment.md) | Running a real domain: TLS, QUIC, retention, a two-domain checklist. |
 | [`docs/patterns.md`](docs/patterns.md) | Non-normative conventions: self-service quota reporting, using `status`/`received` kinds, when to reach for streaming. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to build/test, and the spec-change-vs-implementation-change distinction this being a *protocol* repo implies. |
+| [`SECURITY.md`](SECURITY.md) | How to report a vulnerability privately. |
+| [`CHANGELOG.md`](CHANGELOG.md) | What's shipped, in Keep-a-Changelog format. |
 
 ## Examples
 

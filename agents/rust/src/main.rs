@@ -197,7 +197,10 @@ async fn handle_message(
 
     let wrapped = persona::untrusted_wrapper(&env.from, &incoming_text);
     let history = tracker.get(&env.thread);
-    let reply_text = match llm.complete(persona::SYSTEM_PROMPT, &history, &wrapped).await {
+    let reply_text = match llm
+        .complete(persona::SYSTEM_PROMPT, &history, &wrapped)
+        .await
+    {
         Ok(text) => text,
         Err(e) => {
             eprintln!("[{own_domain}] llm error: {e}");

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "activities.local — a Rust AWP demo agent, talking to Grok."
+repository = "https://github.com/agentask/awp"
 publish = false
 
 [lib]

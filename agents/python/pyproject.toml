@@ -2,6 +2,7 @@
 name = "awp-concierge-agent"
 version = "0.1.0"
 description = "concierge.local — the Python corner of the Go/Python/Rust AWP triangle demo (see README.md)"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "awp-sdk",
@@ -10,6 +11,9 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "uvicorn[standard]>=0.51.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/agentask/awp"
 
 [dependency-groups]
 dev = [

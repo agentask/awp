@@ -1,3 +1,19 @@
+# Go/Rust build artifacts
 go
-.claude
 target
+
+# Local Claude Code project config
+.claude
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local awpd runtime state (bbolt data dirs examples/agents create)
+*.db
+awpd-data/
+
+# OS / editor
+.DS_Store
+*.swp

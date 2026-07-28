@@ -37,14 +37,19 @@ pub type SendFn = Arc<
             String,
             Value,
         ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<Envelope, awp::client::ClientError>> + Send>,
+            Box<
+                dyn std::future::Future<Output = Result<Envelope, awp::client::ClientError>> + Send,
+            >,
         > + Send
         + Sync,
 >;
 
 /// Processes one inbound `message`/`reply` envelope.
-pub type MessageHandler =
-    Arc<dyn Fn(Envelope, SendFn) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+pub type MessageHandler = Arc<
+    dyn Fn(Envelope, SendFn) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
 
 struct SeenEntry {
     accept_until: SystemTime,
@@ -92,6 +97,8 @@ impl Node {
             peers: None,
             crawl: None,
             transports: None,
+            capabilities: None,
+            wake: None,
             sig: None,
         };
         index

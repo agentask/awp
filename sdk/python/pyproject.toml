@@ -2,6 +2,7 @@
 name = "awp-sdk"
 version = "0.1.0"
 description = "AWP reference Python SDK: a thin, standalone client for sending envelopes and calling sync tools"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "cryptography>=49.0.0",
@@ -9,6 +10,9 @@ dependencies = [
     "python-ulid>=4.0.1",
     "rfc8785>=0.1.4",
 ]
+
+[project.urls]
+Repository = "https://github.com/agentask/awp"
 
 [dependency-groups]
 dev = [

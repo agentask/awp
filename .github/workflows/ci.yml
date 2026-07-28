@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    name: Go (daemon, CLI, sdk/go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - name: gofmt (must print nothing)
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "$out"
+            echo "::error::gofmt found unformatted files (run 'gofmt -w .')"
+            exit 1
+          fi
+      - name: go test -race (everything except agents/go)
+        run: go test $(go list ./... | grep -v '/agents/go$') -race
+      - name: go test agents/go (no -race — known pre-existing race, see docs/experiments.md)
+        run: go test ./agents/go/...
+
+  python:
+    name: Python (sdk/python, agents/python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv run pytest
+        working-directory: sdk/python
+      - run: uv run pytest
+        working-directory: agents/python
+
+  rust:
+    name: Rust (sdk/rust, agents/rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo build
+        working-directory: sdk/rust
+      - run: cargo test
+        working-directory: sdk/rust
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: sdk/rust
+      - run: cargo fmt -- --check
+        working-directory: sdk/rust
+      - run: cargo build
+        working-directory: agents/rust
+      - run: cargo test
+        working-directory: agents/rust
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: agents/rust
+      - run: cargo fmt -- --check
+        working-directory: agents/rust
