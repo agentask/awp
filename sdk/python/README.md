@@ -27,6 +27,10 @@ self-contained module tree.
 - `Client.send_envelope` — build, validate (TTL, size), sign, and deliver
   one envelope to `to`'s resolved inbox. One delivery attempt: no retry, no
   persistence.
+- `Client.send_stream_chunk` — the same, with `awp-streaming-v0.1.md` §2's
+  `stream_chunk` body shape built for you. Producer-side only: this SDK's
+  statelessness means it has no reassembly story, on purpose — a receiving
+  daemon (`internal/daemon`'s `Config.StreamChunkHandler`) does that.
 - `Client.call_tool` — resolve a tool's hosted endpoint, sign the sync call
   per the `awp-sig-v0.1.md` RFC 9421 subset, attach `AWP-Session`/
   `AWP-Delegation` headers when supplied, verify the response signature if

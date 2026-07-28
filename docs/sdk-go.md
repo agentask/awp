@@ -114,6 +114,31 @@ sides run a full `daemon.Daemon` (so they can *receive*), and the
 `Send`/delivery loop shown there is `internal/daemon`'s own equivalent of
 this method, not the SDK's — `sdk/go` has no receiving story at all.
 
+### Streaming a response: `SendStreamChunk`
+
+```go
+func (c *Client) SendStreamChunk(ctx context.Context, kind, to, thread string,
+	inReplyTo *string, streamID string, seq int, final bool,
+	data json.RawMessage, ttl int) (*envelope.Envelope, error)
+```
+
+A thin wrapper over `SendEnvelope` with `awp-streaming-v0.1.md` §2's
+body shape (`{"type":"stream_chunk","stream_id",...}`) built for you —
+same single-delivery-attempt behavior, same lack of retry. `streamID` is
+a fresh `envelope.NewID()` for `seq: 0` of a new stream, then the same
+value for every later chunk of that stream; `seq` must strictly
+increase; `final` is `true` on exactly the last chunk. This SDK has no
+receiving story (see above), so it only ever sends chunks — reassembly
+on the far end is `internal/daemon`'s `Config.StreamChunkHandler`
+(`docs/agent-guide.md`'s "Receiving a streamed answer").
+
+```go
+thread := envelope.NewID()
+streamID := envelope.NewID()
+client.SendStreamChunk(ctx, "reply", "bob.example", thread, nil, streamID, 0, false, json.RawMessage(`{"text":"first chunk"}`), 3600)
+client.SendStreamChunk(ctx, "reply", "bob.example", thread, nil, streamID, 1, true, json.RawMessage(`{"text":"last chunk"}`), 3600)
+```
+
 ## Calling: `CallTool`
 
 ```go

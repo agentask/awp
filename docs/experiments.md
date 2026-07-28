@@ -1067,3 +1067,49 @@ connection in both the package's own tests and its conformance prober;
 real Go-signs/Python-verifies interop cross-checks for `compensated_by`
 (tamper-detected) via a temporary in-repo scratch program, cleaned up
 afterward.
+
+## 12-feature roadmap: feature #12 (streaming), implemented after audit
+
+A post-Phase-3 audit ("what's left?") found that #12 (response
+streaming) was the one genuine gap: `spec/awp-streaming-v0.1.md` was
+promoted from `ideas/` in Phase 0, but no phase ever scheduled its
+implementation — Phase 0 was explicitly docs-only, and the roadmap
+simply never returned to it. (The audit's other flagged item, #8
+pre-flight cost estimation, is correctly *not* a gap — it's deliberately
+blocked on v0.2 pricing, exactly per the original plan.)
+
+Implemented in full: `internal/store/streams.go` (bounded, gap-tolerant
+chunk reassembly per §4/§6 — 65536 buffered chunks/stream_id, spec-
+mandated, with the bound parameterized internally so tests don't commit
+tens of thousands of individual bbolt transactions), `internal/daemon`
+(`Config.StreamChunkHandler`, `Config.DisableStreaming`,
+`RunGCOnce`'s new third return value for abandoned-buffer GC),
+`cmd/awpd` (`-disable-streaming`, `-stream-buffer-max-age`),
+`internal/conformance/streaming.go` (a real signature-verified-before-
+buffering check; the rest Skip with documented reasons, following
+`core-5.5-unknown-body-type`'s own established precedent for claims
+that need a receiving inbox the prober doesn't have), and
+`sdk/python`'s `Client.send_stream_chunk` (producer-side only — this
+SDK is deliberately stateless, no reassembly story fits that).
+
+**Discovered and fixed along the way, not originally in scope:** core
+§2.3's "unknown body types MUST produce error(unsupported_body)" had
+never actually been implemented anywhere in this daemon before this
+work — nothing inspected `body.type` at all prior to
+`tryProcessStreamChunk`. Implementing streaming's own §9/§10.5
+correctly required implementing this general rule too (scoped via
+`DisableStreaming` rather than a general body-type registry, since
+nothing in this repo uses a body type beyond core's registered set).
+Also discovered: `internal/daemon` had never wired `Index.Capabilities`
+to anything, despite Phase 1 implementing that field on the wire —
+streaming is the first thing this reference daemon actually advertises
+through it (`"awp-streaming-v0.1"`).
+
+Gate: `go build ./...`, `go vet ./...`, `gofmt -l .` clean; `go test
+./... -race -count=1` green except the same pre-existing, unrelated
+`agents/go` race; `sdk/python` 98 passed/6 skipped; `agents/python` 4
+passed; `sdk/rust` 19 passed (untouched, confirmed still green). Real
+cross-language interop proof: a live Go daemon correctly reassembled
+three deliberately out-of-order `stream_chunk` envelopes sent by a real
+`sdk/python` `Client` over genuine HTTP into gap-free, in-order
+delivery — not asserted, actually run and observed.

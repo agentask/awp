@@ -75,9 +75,10 @@ report than "the daemon is running" doesn't need a `status` entity at
 all — that's what the index fetch above already demonstrates.
 
 Conformance/monitoring tooling (a `docs/deployment.md`-style operational
-concern) is the most natural consumer: `awp conformance <domain>` could
-grow a check that looks for a `kind: status` entity and reports what it
-finds, the same way it already reports on the domain index itself.
+concern) is the most natural consumer: `awp conformance <domain>`
+already includes `awp-kinds-2-status-entity`, which looks for a
+`kind: status` entity and reports what it finds, the same way it
+already reports on the domain index itself.
 
 ## Using `received` vs `ack` (`spec/awp-kinds-v0.1.md` §1)
 
@@ -98,6 +99,48 @@ your architecture has a real gap between "accepted" and "a decision was
 made" — e.g. a queue-backed system where those two things can be minutes
 apart.
 
+## Streaming responses (`spec/awp-streaming-v0.1.md`)
+
+Unlike `status`/`received`/quota-reporting above, streaming has real
+normative substance (a new `body.type`, reassembly rules, a fixed
+buffer bound) — it's not purely a convention. This section is about
+*when* to reach for it, which is a judgment call this repo's spec
+deliberately leaves to the caller.
+
+Use streaming (a `task` sent to a `kind: agent` entity, answered as a
+`stream_chunk` sequence) when a response is produced incrementally and
+a caller benefits from seeing it as it arrives — token-by-token model
+output, a long-running computation reporting progress. Don't reach for
+it just because a response is *large*: a single `reply` envelope is
+simpler, and the core §2.1 256 KiB cap is generous for most non-model
+content; `resource` (core §2.3, a `sha256`-pinned URL reference) is the
+right tool for large opaque payloads, not chunking.
+
+**Chunking granularity matters more than it looks.** Every chunk is a
+fully independent, fully signed envelope — one Ed25519 signature, one
+delivery attempt, the full fixed per-envelope overhead core already
+has. `awp-streaming-v0.1.md` §7 is explicit: coalesce to sentences,
+paragraphs, or a bounded time window, not one chunk per model token.
+The cryptographic cost itself is negligible (sub-millisecond Ed25519
+verification); the overhead that actually adds up is everything else
+an envelope carries regardless of how little `data` it holds.
+
+**Consuming a stream on the receiving side:** set
+`daemon.Config.StreamChunkHandler` — it's invoked once per chunk, in
+order, with no gaps, after `internal/daemon`'s own reassembly buffering
+already resolved any out-of-order arrival. Leaving it unset doesn't
+lose anything; chunks are still correctly reassembled and permanently
+archived (`Store.ThreadMessages`, like any other envelope), just not
+pushed anywhere — reach for the handler when you want incremental
+delivery (e.g. streaming partial content into a UI) rather than reading
+the whole thing back after the fact. `sdk/python`'s `Client` has no
+handler equivalent by design (it's a stateless, no-store SDK for
+third-party programs) — `Client.send_stream_chunk` is producer-side
+only; consuming a stream from Python means either running a real
+daemon or reassembling from repeated `send_envelope`-style polling
+against your own storage, which this SDK deliberately doesn't
+prescribe.
+
 ## Where to go next
 
 - [`docs/agent-guide.md`](agent-guide.md) — the broader question of what
@@ -106,3 +149,6 @@ apart.
   and gate machinery this document leans on actually works.
 - `spec/awp-kinds-v0.1.md`, `spec/awp-streaming-v0.1.md` — the two
   normative additions this document assumes.
+- [`docs/protocol-overview.md`](protocol-overview.md#extensions-beyond-core-v01)
+  — every other registered extension (capabilities, versioning, push,
+  transactions, the `awp-ws/1` transport) this document doesn't cover.

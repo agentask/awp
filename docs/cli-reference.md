@@ -30,6 +30,10 @@ works for a local run.
 | `-resolve-insecure` | `false` | Skip TLS certificate verification when *this* daemon resolves domain indexes or dials `awp/1` peers. Local/dev/self-test only — never set this in production. |
 | `-quic-addr` | *(unset)* | `awp/1` (QUIC) listen address. Empty disables QUIC entirely and the daemon advertises HTTPS-only, which is always spec-compliant (`awp-quic-v0.1.md` §2). |
 | `-quic-dial-timeout` | `5s` | Timeout dialing a peer's `awp/1` endpoint before falling back to HTTPS. |
+| `-ws` | `false` | Enable `awp-ws/1` (WebSocket) transport (`awp-ws-v0.1.md`). Needs no separate listen address — it shares `-addr`'s existing HTTPS listener. |
+| `-ws-dial-timeout` | `5s` | Timeout dialing a peer's `awp-ws/1` endpoint before falling back to the next transport. |
+| `-disable-streaming` | `false` | Reject `stream_chunk` bodies with `error(unsupported_body)` instead of reassembling them, and stop advertising the `"awp-streaming-v0.1"` capability — simulates an implementation that hasn't adopted `awp-streaming-v0.1.md` (core §2.3/§9). The default adopts streaming. |
+| `-stream-buffer-max-age` | `24h` | How long an incomplete stream's reassembly buffer is kept before hourly GC reclaims it as abandoned (`awp-streaming-v0.1.md` §5). |
 | `-demo-echo-tool` | `false` | Register a demo `kind:tool` entity (`#echo`) that returns its verified caller + input, for trying out sync tool calls without writing any code. Not registered by default. |
 | `-dead-retention` | `720h` | How long dead-lettered outbound envelopes are kept before hourly GC deletes them (`awpd-outbox-v0.1.md` §3 `outbox.dead_retention`). |
 
@@ -51,9 +55,11 @@ conformance runs) during local testing.
 **What runs in the background.** Once started, `awpd` runs three
 tickers on `-tick`/hourly cadences for as long as the process is alive:
 inbound processing + outbound delivery (every `-tick`), and garbage
-collection of expired `seen` entries and past-retention dead letters
-(hourly, per `awpd-store-v0.1.md` §2's "GC: hourly cursor scan" — see
-[`docs/deployment.md`](deployment.md) for tuning retention).
+collection of expired `seen` entries, past-retention dead letters, and
+abandoned incomplete stream reassembly buffers (hourly, per
+`awpd-store-v0.1.md` §2's "GC: hourly cursor scan" and
+`awp-streaming-v0.1.md` §5 — see [`docs/deployment.md`](deployment.md)
+for tuning retention).
 
 ## `awp`
 
@@ -63,10 +69,13 @@ go build -o awp ./cmd/awp
 
 ### `awp conformance <domain> [flags]`
 
-Runs the core §5 and `awp-quic` §8 conformance checklists against any
-AWP implementation reachable at `<domain>` — not just this repo's own
-`awpd`. Exits `0` if every check passed or was a documented `Skip`, `1`
-if anything failed.
+Runs the core §5, `awp-quic` §8, and `awp-ws` §7 conformance checklists,
+plus every registered extension this repo implements (capability
+advertisement, `status` entities, push/wake, transactions, streaming —
+see [`docs/protocol-overview.md`](protocol-overview.md#extensions-beyond-core-v01)
+for the full list), against any AWP implementation reachable at
+`<domain>` — not just this repo's own `awpd`. Exits `0` if every check
+passed or was a documented `Skip`, `1` if anything failed.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -81,13 +90,15 @@ if anything failed.
 go run ./cmd/awp conformance example.com -insecure
 ```
 
-Four checklist items (`core-5.4-delegation`, `core-5.5-unknown-body-type`,
-`core-5.7-two-party`, `core-5.3-retention`) always report `Skip` with a
-specific reason, not `Pass` — they describe internal state a black-box
-prober has no spec-defined way to observe from outside. See
-`docs/experiments.md`'s Phase 5 section for the full reasoning; this
-isn't a gap in the checker, it's a property of what's actually
-observable over the wire.
+A number of checklist items (`core-5.4-delegation`,
+`core-5.5-unknown-body-type`, `core-5.7-two-party`, `core-5.3-retention`,
+and — for the same underlying reason — most of `awp-streaming`'s §10
+items) always report `Skip` with a specific reason, not `Pass` — they
+describe internal state, or an async response delivered to a receiving
+inbox the prober doesn't have, neither of which a stateless black-box
+prober can observe from outside. See `docs/experiments.md`'s Phase 5
+section for the original reasoning; this isn't a gap in the checker,
+it's a property of what's actually observable over the wire.
 
 ### `awp outbox ls -dead -data <dir>`
 

@@ -76,12 +76,12 @@ flowchart TB
 
         subgraph loops ["goroutines started by cmd/awpd/main.go, forever"]
             L_TICK["runTicker (every -tick, default 1s):<br/>ProcessInboundOnce + RunOutboxOnce"]
-            L_GC["runGCTicker (every 1h):<br/>RunGCOnce — GCSeen + GCDeadLetters"]
+            L_GC["runGCTicker (every 1h):<br/>RunGCOnce — GCSeen + GCDeadLetters + GCStreamBuffers"]
             L_QUIC["ServeQUIC (if enabled):<br/>quictrans.Server over QUICLN"]
         end
 
         EXEC["ToolHandler (native Go)<br/>or wasmrt.Module (sandboxed)"]
-        STORE[("bbolt: awpd-data/awpd.db<br/>seen · inq · outbox · threads · keys_cache")]
+        STORE[("bbolt: awpd-data/awpd.db<br/>seen · inq · outbox · threads · keys_cache · stream_meta/stream_chunks")]
     end
 
     LISTENER --> mux
@@ -364,7 +364,9 @@ Sender                                          Receiver
                                             5. durably enqueue               → 202 / 503
                                           ProcessInboundOnce (own schedule)
                                             record thread state (store.RecordThreadEnvelope)
-                                            if kind == "message": run Config.MessageHandler
+                                            if body.type == "stream_chunk": reassemble (any kind) —
+                                              see the streaming callout below; short-circuits the rest
+                                            else if kind == "message": run Config.MessageHandler
                                               (default: send ack, then reply — see callout below)
                                             send(...) for any response → back through the sender's own outbox
 ```
@@ -400,6 +402,22 @@ just this same closure called twice — see `examples/custom-message-handler`
 for a real handler and `examples/agent-messaging` for the default,
 side by side.
 
+**Why stream_chunk detection happens before the kind check, not inside
+`MessageHandler`.** `awp-streaming-v0.1.md` chunks typically carry
+`kind: reply` (answering a request, not making one), and
+`ProcessInboundOnce` never invoked any handler at all for non-`message`
+kinds before this existed — so reassembly couldn't live inside
+`MessageHandler` without also making every reply-kind envelope
+newly dispatch through it, a much bigger behavior change than adding
+one feature warrants. `tryProcessStreamChunk` runs first, regardless of
+`kind`, and buffers/reassembles through `internal/store`'s bounded
+(65536 chunks/stream_id) reassembly bucket; each chunk that becomes
+deliverable (in order, gap-free) is pushed to `Config.StreamChunkHandler`
+if set. A malformed body or a bound violation gets an `error` envelope
+back to the sender instead — the same `send`-style mechanism
+`MessageHandler` uses, just internal to `tryProcessStreamChunk` rather
+than caller-supplied.
+
 **Why outbox delivery is per-domain-serial, not per-envelope-parallel.**
 `outbox.ProcessDue` starts at most one in-flight delivery per destination
 domain per call — visible in `examples/agent-messaging`, where two
@@ -426,9 +444,12 @@ call sites in `cmd/awpd/main.go` for where this runs relative to opening
 the store.
 
 `RunGCOnce` (called hourly by `cmd/awpd`, per `awpd-store-v0.1.md` §2)
-deletes expired `seen` entries and dead-lettered outbound records past
-their retention window — see [`docs/deployment.md`](deployment.md) for
-tuning this.
+deletes expired `seen` entries, dead-lettered outbound records past
+their retention window, and incomplete stream reassembly buffers that
+haven't seen a new chunk in `Config.StreamBufferMaxAge`
+(`awp-streaming-v0.1.md` §5's "detecting an incomplete stream is a
+receiver-local concern") — see [`docs/deployment.md`](deployment.md)
+for tuning this.
 
 ## Identity resolution
 

@@ -291,6 +291,35 @@ handler is *where* your agent's reasoning lives, not a replacement for
 writing it. That's exactly why the caller-only branch above exists:
 don't build a receiving agent until your design actually needs one.
 
+### Receiving a streamed answer
+
+If a peer sends you a response as a `stream_chunk` sequence instead of
+one `reply` (`spec/awp-streaming-v0.1.md` — typically because *you* sent
+it a `task` expecting incremental output), `MessageHandler` never sees
+those envelopes at all: `internal/daemon` detects `stream_chunk` bodies
+before its normal kind-based dispatch and reassembles them itself, in
+order, tolerating out-of-order arrival. Set
+`daemon.Config.StreamChunkHandler` to receive each chunk as it becomes
+deliverable:
+
+```go
+d, err := daemon.New(daemon.Config{
+    // ...Domain, Kid, Priv, Store, Clock, Resolver...
+    StreamChunkHandler: func(ctx context.Context, thread, streamID string, seq int, final bool, data json.RawMessage) error {
+        // Called once per chunk, strictly in seq order, with no gaps —
+        // internal/daemon already resolved any out-of-order delivery
+        // before this runs. Append data to whatever you're building for
+        // (thread, streamID); final==true on exactly the last chunk.
+        return appendToYourOwnBuffer(thread, streamID, seq, data)
+    },
+})
+```
+
+Leaving it unset costs nothing beyond not getting a live callback —
+every chunk is still correctly reassembled and permanently archived
+(`d.Store.ThreadMessages(thread)`, like any other envelope), just not
+pushed anywhere until you go looking for it.
+
 ## Where to go next
 
 - [`docs/sdk-go.md`](sdk-go.md) — every method referenced above, in full.

@@ -235,6 +235,62 @@ instructions, and a client feeding it to a model must apply
 untrusted-content framing), §2.4 (kinds and thread lifecycle), §2.5
 (delegation, covered above).
 
+## Extensions beyond core v0.1
+
+Everything above is `awp-core-v0.1.md`. A later round of small, additive
+extension documents built on top of it without changing any of it —
+each is optional, each is independently adoptable, and a domain that
+hasn't implemented any of them is still fully core-conformant. `awp
+conformance <domain>` (`docs/cli-reference.md`) checks all of them
+against any target, not just this repo's own `awpd`.
+
+- **Capability advertisement, sandbox mode, dry-run**
+  (`spec/awp-capabilities-v0.1.md`) — a domain index MAY list
+  `capabilities` (e.g. `"awp-streaming-v0.1"`) so a caller can discover
+  optional adoption without finding out by trying; a manifest MAY mark
+  itself `"environment": "sandbox"`; a sync call MAY carry
+  `AWP-Dry-Run: true` — an ordinary `AWP-*` header, covered by the
+  existing signature automatically, no `internal/httpsig` change needed.
+- **Manifest versioning** (`spec/awp-versioning-v0.1.md`) — a manifest
+  MAY carry `changelog` (an informational URL, never dereferenced by
+  anything) and `previous_sha256` (a self-asserted hash-chain link to
+  the manifest version it supersedes, verifiable only by whoever
+  happens to hold that exact prior document — core still makes no
+  archival guarantee for old manifest content).
+- **Two additional envelope/entity kinds** (`spec/awp-kinds-v0.1.md`) —
+  `received` (a weaker-than-`ack` passive receipt) and `status` (a
+  health-check entity kind, with a conformance-checked
+  `{healthy, checked_at}` response shape).
+- **Push/wake notification** (`spec/awp-push-v0.1.md`) — a domain index
+  MAY declare an unauthenticated `wake` endpoint a sender's outbox pings
+  (best-effort, fire-and-forget) after a delivery attempt fails with a
+  network error or 5xx — never on success, never on an honored 429
+  (which already proves the receiver is alive). It never carries
+  envelope content; it only asks the receiver to check its inbox sooner
+  than backoff otherwise would.
+- **Multi-tool saga transactions** (`spec/awp-transactions-v0.1.md`) —
+  a manifest MAY declare `compensated_by` (the tool that undoes this
+  one's effect); a sync call MAY carry `AWP-Transaction` (id/step/
+  coordinator, another ordinary `AWP-*` header) so a caller running a
+  multi-step sequence across independent domains can compensate
+  already-succeeded steps if a later one fails. This is deliberately
+  the saga pattern, not two-phase commit — see the spec's own §0 for why
+  real cross-domain ACID atomicity isn't attempted.
+- **`awp-ws/1` (WebSocket) transport** (`spec/awp-ws-v0.1.md`,
+  `internal/wstrans`, `cmd/awpd -ws`) — envelope delivery only, like
+  `awp/1`, but sharing the daemon's existing HTTPS listener rather than
+  needing a new port; many envelopes multiplex over one connection,
+  correlated by envelope `id`.
+- **Response streaming** (`spec/awp-streaming-v0.1.md`,
+  `Config.StreamChunkHandler`) — a long or incrementally-produced async
+  response is several ordinary, independently and fully signed
+  envelopes carrying a `stream_chunk` body (`stream_id`, `seq`,
+  `final`, `data`), reassembled in order and tolerant of out-of-order
+  delivery, bounded at 65536 buffered chunks per stream. No change to
+  envelope signing, the receiver gate, or sync tool calls at all — this
+  is a `body.type` extension only, and sync streaming is explicitly out
+  of scope (model it as `task`-to-an-agent instead).
+
 ## What's not here
 
 - **Discovery** (`spec/awp-core-v0.1.md` §3, `spec/awp-discovery-v0.1.md`)
@@ -247,10 +303,11 @@ untrusted-content framing), §2.4 (kinds and thread lifecycle), §2.5
   store-and-forward relays, the WASM component-model interface,
   pricing/settlement, a standardized scope vocabulary, and content-trust
   labels beyond sender authentication. All explicitly v0.2.
-- **`awp/1` over QUIC** (`spec/awp-quic-v0.1.md`) is *not* deferred —
-  it's implemented (`internal/quictrans`, wired into `cmd/awpd` via
-  `-quic-addr`) as the optional, envelope-only upgrade the spec describes,
-  with mandatory HTTPS fallback. It's just orthogonal to the concepts
+- **`awp/1` over QUIC** (`spec/awp-quic-v0.1.md`) and **`awp-ws/1` over
+  WebSocket** (`spec/awp-ws-v0.1.md`, in "Extensions beyond core v0.1"
+  above) are *not* deferred — both are implemented, wired into
+  `cmd/awpd` (`-quic-addr`, `-ws`), as optional, envelope-only upgrades
+  with mandatory HTTPS fallback. They're just orthogonal to the concepts
   above, which all hold regardless of which transport carried the bytes.
 
 ## Where to go next
@@ -261,4 +318,7 @@ untrusted-content framing), §2.4 (kinds and thread lifecycle), §2.5
 - [`docs/architecture.md`](architecture.md) — how the `internal/*`
   packages implement everything above.
 - [`docs/sdk-go.md`](sdk-go.md) — the client API for everything above.
+- [`docs/patterns.md`](patterns.md) — recommended usage patterns for the
+  registered kinds and non-normative conventions (self-service usage
+  reporting, `status` vs. a bare index fetch, `received` vs. `ack`).
 - [`examples/`](../examples) — all of it, running.

@@ -75,10 +75,34 @@ Leaving `-quic-addr` unset (the default) is not a degraded mode — an
 index with no `transports[]` entry is HTTPS-only, which is always
 spec-compliant.
 
+## 3.5. Enabling `awp-ws/1` (WebSocket)
+
+`awp-ws-v0.1.md`'s WebSocket transport is the same kind of optional,
+negotiated upgrade QUIC is — but unlike QUIC, it needs no separate
+listen address or certificate; it shares `-addr`'s existing HTTPS
+listener:
+
+```
+awpd -domain example.com -kid 2026-07-01 \
+  -tls-cert ... -tls-key ... \
+  -ws -ws-dial-timeout 5s
+```
+
+With `-ws` set, `awpd` mounts the WebSocket upgrade handler on its
+existing mux and advertises `transports: [{"proto":"awp-ws/1", ...}]`.
+Fallback and gate equivalence work identically to QUIC's — a failed
+handshake or connection falls back to HTTPS with the exact same bytes
+(`internal/wstrans.FallbackSender`), and `internal/inbox.Gate` doesn't
+know or care which transport handed it an envelope. If both `-quic-addr`
+and `-ws` are set, this daemon's own outbound sends try WebSocket, then
+`awp/1`, then HTTPS, in that order (`awp-ws-v0.1.md` §5's reference
+ordering) — an operator enabling both isn't choosing between them, a
+sender picks per attempt.
+
 ## 4. Retention and garbage collection
 
 `awpd` runs GC on an hourly ticker automatically — there's no flag to
-disable it, only to size the two things it collects:
+disable it, only to size the three things it collects:
 
 - **`seen` entries** (the dedupe set for inbound envelope ids) are
   deleted once their retention window passes. This is sized per-envelope
@@ -91,6 +115,13 @@ disable it, only to size the two things it collects:
   defaulting to 720h / 30 days). Embedding `internal/daemon` directly
   instead of running the `awpd` binary sets the same value via
   `Config.DeadRetention`.
+- **Incomplete stream reassembly buffers** (`awp-streaming-v0.1.md` §5 —
+  a stream that never received its `final: true` chunk) are reclaimed
+  after `-stream-buffer-max-age` (defaulting to 24h) with no new chunk
+  arriving. A *completed* stream's tiny leftover bookkeeping record is
+  reclaimed the same way, on the same timer — there's nothing costly
+  about it either way. `Config.StreamBufferMaxAge` is the same knob when
+  embedding `internal/daemon` directly.
 
 Inspect what's currently dead-lettered at any time, without stopping the
 daemon:
