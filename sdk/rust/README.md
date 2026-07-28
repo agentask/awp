@@ -23,13 +23,22 @@ indexes are cached in memory for the lifetime of a `Client` only.
   sign, and POST an envelope to the recipient's resolved inbox. One
   synchronous delivery attempt, no retry.
 - `Client::call_tool` — resolve a tool's hosted endpoint, sign the sync
-  call per the awp-sig httpsig subset, set `AWP-Session`/`AWP-Delegation`
-  headers when supplied, verify a response signature if present (absent is
-  fine; present-and-invalid is always an error), and parse the
-  `{output, session}` success shape or the `{code, detail, retryable}`
-  error grammar.
+  call per the awp-sig httpsig subset, set `AWP-Session`/`AWP-Delegation`/
+  `AWP-Dry-Run`/`AWP-Transaction` headers when supplied via `CallOptions`,
+  verify a response signature if present (absent is fine; present-and-invalid
+  is always an error), and parse the `{output, session}` success shape or
+  the `{code, detail, retryable}` error grammar.
+- `Client::send_stream_chunk` — build, sign, and deliver one
+  `awp-streaming-v0.1.md` §2 `stream_chunk` envelope; a thin wrapper over
+  `send_envelope` with the body shape built for you. Producer-side only —
+  this crate has no reassembly story, by design.
 - `Client::sign_delegation_link` — build and sign one core §2.5 delegation
   link.
+- `Manifest`/`Index` carry every optional field the extension documents
+  register: `Manifest::environment`/`capabilities`/`changelog`/
+  `previous_sha256`/`compensated_by`, `Index::capabilities`/`wake` — see
+  `docs/sdk-rust.md` in the main repo for what each one means and which
+  spec document defines it.
 
 Beyond literal parity with `sdk/go`'s `Client` — Go programs get this for
 free by importing `internal/envelope`/`internal/identity` directly, since

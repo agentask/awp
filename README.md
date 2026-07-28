@@ -60,10 +60,11 @@ in `awp-core` and `awp-sig` holds. `awp-quic`, `awp-ws`, `awp-streaming`,
 `awp-kinds`, `awp-capabilities`, `awp-versioning`, `awp-push`, and
 `awp-transactions` are all purely additive extensions on top of that
 core — none of them change core's wire behavior, all are independently
-adoptable, and `awpd` implements every one of them (`sdk/go`/`sdk/python`
-implement whichever of them are meaningful for a thin, non-daemon
-client — `awp-quic`/`awp-ws` are daemon-only transport bindings, neither
-SDK speaks anything but plain HTTPS) — see
+adoptable, and `awpd` implements every one of them (all three SDKs —
+`sdk/go`, `sdk/python`, `sdk/rust` — implement whichever of them are
+meaningful for a thin, non-daemon client: `awp-quic`/`awp-ws` are
+daemon-only transport bindings, no SDK speaks anything but plain HTTPS)
+— see
 [`docs/protocol-overview.md#extensions-beyond-core-v01`](docs/protocol-overview.md#extensions-beyond-core-v01)
 for what each one does and where its code lives. `awp-discovery` is the
 one exception, still Strawman and unimplemented — see its own status
@@ -76,11 +77,14 @@ tools, and executes portable (wasm32-wasip1) entities on
 [wazero](https://github.com/tetratelabs/wazero). `awp` is a small CLI for
 black-box conformance testing (`awp conformance <domain>`) and local outbox
 inspection (`awp outbox ls -dead`) — it is not how you send messages or call
-tools programmatically; that's `sdk/go`, a thin client for third-party Go
-programs to speak AWP directly (sign, send, call) without running a daemon.
-First milestone (tagged `v0.1.0-m1`): two instances completing a signed
-`message → ack → reply → close` thread on localhost — see
-`examples/agent-messaging` for exactly that, running.
+tools programmatically; that's the three SDKs, thin clients that speak AWP
+directly (sign, send, call) without running a daemon: `sdk/go` (a wrapper
+over the same `internal/*` packages `awpd` itself uses, since it lives in
+the same module), and `sdk/python`/`sdk/rust` (independent from-scratch
+reimplementations, cross-checked against the Go output for byte-identical
+signing/canonicalization). First milestone (tagged `v0.1.0-m1`): two
+instances completing a signed `message → ack → reply → close` thread on
+localhost — see `examples/agent-messaging` for exactly that, running.
 
 ## Documentation
 
@@ -91,6 +95,8 @@ First milestone (tagged `v0.1.0-m1`): two instances completing a signed
 | [`docs/agent-guide.md`](docs/agent-guide.md) | **For AI agents/agent builders**: what's safe to feed a model, tool discovery, delegation, and what it actually takes to be a callable agent, not just a caller. |
 | [`docs/architecture.md`](docs/architecture.md) | How the `internal/*` packages implement the protocol; system, process, and request-flow diagrams. |
 | [`docs/sdk-go.md`](docs/sdk-go.md) | The `sdk/go` client API reference. |
+| [`docs/sdk-python.md`](docs/sdk-python.md) | The `sdk/python` client API reference, including the receiver-side verification logic `sdk/go` gets for free from `internal/`. |
+| [`docs/sdk-rust.md`](docs/sdk-rust.md) | The `sdk/rust` client API reference. |
 | [`docs/cli-reference.md`](docs/cli-reference.md) | Every `awpd`/`awp` flag that actually exists. |
 | [`docs/deployment.md`](docs/deployment.md) | Running a real domain: TLS, QUIC, retention, a two-domain checklist. |
 | [`docs/patterns.md`](docs/patterns.md) | Non-normative conventions: self-service quota reporting, using `status`/`received` kinds, when to reach for streaming. |

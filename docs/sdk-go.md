@@ -143,8 +143,10 @@ client.SendStreamChunk(ctx, "reply", "bob.example", thread, nil, streamID, 1, tr
 
 ```go
 type CallOptions struct {
-	Session    string            // an AWP-Session token from a prior call, or ""
-	Delegation []delegation.Link // a pre-signed core §2.5 chain, or nil
+	Session     string            // an AWP-Session token from a prior call, or ""
+	Delegation  []delegation.Link // a pre-signed core §2.5 chain, or nil
+	DryRun      bool              // sets AWP-Dry-Run: true (awp-capabilities-v0.1.md §3.1)
+	Transaction *Transaction      // sets AWP-Transaction (awp-transactions-v0.1.md §2), or nil
 }
 
 type SessionInfo struct {
@@ -153,6 +155,28 @@ type SessionInfo struct {
 
 func (c *Client) CallTool(ctx context.Context, toolPrincipal string,
 	input json.RawMessage, opts CallOptions) (json.RawMessage, *SessionInfo, error)
+```
+
+`DryRun` and `Transaction` are both ordinary `AWP-*` headers — `internal/httpsig`'s covered-component rule already includes any `AWP-*` header present, so neither needed a signing-algorithm change to add. Advisory on both counts: a provider that never declared support MAY ignore either silently rather than reject the call (awp-capabilities-v0.1.md §3, awp-transactions-v0.1.md §2).
+
+```go
+out, _, err := client.CallTool(ctx, "invoice-tool.example#generate", input, awp.CallOptions{DryRun: true})
+```
+
+```go
+type Transaction struct {
+	ID          string // ULID, minted once by the coordinator for the whole attempt
+	Step        int    // 0-indexed position in the coordinator's sequence
+	Coordinator string // the principal driving the transaction
+}
+```
+
+`Transaction` is the saga-coordination primitive from `awp-transactions-v0.1.md` — see that document's §0 for why AWP models multi-tool coordination as compensating actions rather than two-phase commit, and its §3 for the coordinator-side algorithm (retry/compensate on failure) this SDK does not implement for you: `CallTool` only ever signs and sends the header, exactly as thin as everything else in this package.
+
+```go
+out, _, err := client.CallTool(ctx, tool, input, awp.CallOptions{
+	Transaction: &awp.Transaction{ID: txnID, Step: 0, Coordinator: caller.Domain},
+})
 ```
 
 Resolves `toolPrincipal`'s manifest, requires
