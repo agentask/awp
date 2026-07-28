@@ -175,6 +175,15 @@ pub struct Transport {
     pub endpoint: String,
 }
 
+/// awp-push-v0.1.md §2: an OPTIONAL, unauthenticated liveness hint a
+/// sender may POST to (empty body) after a failed delivery attempt to
+/// this domain's inbox. Never carries envelope content and is not a
+/// transport.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Wake {
+    pub endpoint: String,
+}
+
 /// The signed root document served at /.well-known/awp.json (core §1.1).
 ///
 /// `keys`/`entities` are always-present JSON keys — `null` when the Go
@@ -197,6 +206,17 @@ pub struct Index {
     pub crawl: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transports: Option<Vec<Transport>>,
+    /// awp-capabilities-v0.1.md §1: OPTIONAL domain-level protocol-
+    /// extension advertisement (e.g. "awp-streaming-v0.1"), in the same
+    /// spirit as `transports`. Absence means "no declared optional
+    /// capabilities," exactly like absent `transports` means HTTPS-only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<String>>,
+    /// awp-push-v0.1.md §2: an OPTIONAL wake-notification hint, distinct
+    /// in scope from `capabilities`/`transports` — this is a liveness
+    /// nudge, never a way to carry envelope bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wake: Option<Wake>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sig: Option<Sig>,
 }

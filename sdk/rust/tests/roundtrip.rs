@@ -6,8 +6,8 @@
 
 use awp::delegation::{self, Link, Scope};
 use awp::envelope::Envelope;
-use awp::identity::{self, generate_keypair, Entity, Index, Key, Transport};
-use awp::manifest::{Auth, Distribution, Hosted, IoSchema, Manifest};
+use awp::identity::{self, generate_keypair, Entity, Index, Key, Transport, Wake};
+use awp::manifest::{Auth, Distribution, Hosted, IoSchema, Manifest, DRY_RUN_CAPABILITY};
 use serde_json::json;
 use std::time::{Duration, SystemTime};
 
@@ -173,6 +173,8 @@ fn signed_index(domain: &str, signing_key: &ed25519_dalek::SigningKey, kid: &str
             proto: "https".to_string(),
             endpoint: format!("https://{domain}"),
         }]),
+        capabilities: None,
+        wake: None,
         sig: None,
     };
     idx.sign(signing_key, kid).expect("sign index");
@@ -194,6 +196,50 @@ fn index_self_signature_rejects_tampering() {
     assert!(idx.verify_self_sig().is_err());
 }
 
+/// awp-capabilities-v0.1.md §1 and awp-push-v0.1.md §2: both fields sign,
+/// verify, and tamper-detect exactly like any other index field — inside
+/// the signed document, not bolted on beside it.
+#[test]
+fn index_capabilities_and_wake_sign_verify_and_tamper_detected() {
+    let signing_key = fresh_key();
+    let mut idx = signed_index("example.com", &signing_key, "k1");
+    idx.capabilities = Some(vec!["awp-streaming-v0.1".to_string()]);
+    idx.wake = Some(Wake {
+        endpoint: "https://example.com/awp/wake".to_string(),
+    });
+    idx.sign(&signing_key, "k1").expect("re-sign");
+    idx.verify_self_sig().expect("verify_self_sig");
+
+    let raw = serde_json::to_vec(&idx).unwrap();
+    let round_tripped: Index = serde_json::from_slice(&raw).unwrap();
+    assert_eq!(
+        round_tripped.capabilities,
+        Some(vec!["awp-streaming-v0.1".to_string()])
+    );
+    assert_eq!(
+        round_tripped.wake.as_ref().map(|w| w.endpoint.clone()),
+        Some("https://example.com/awp/wake".to_string())
+    );
+    round_tripped
+        .verify_self_sig()
+        .expect("verify round-tripped");
+
+    let mut tampered = round_tripped;
+    tampered.wake = Some(Wake {
+        endpoint: "https://evil.example.com/awp/wake".to_string(),
+    });
+    assert!(tampered.verify_self_sig().is_err());
+}
+
+#[test]
+fn index_capabilities_and_wake_absent_by_default() {
+    let signing_key = fresh_key();
+    let idx = signed_index("example.com", &signing_key, "k1");
+    let v = serde_json::to_value(&idx).unwrap();
+    assert!(!v.as_object().unwrap().contains_key("capabilities"));
+    assert!(!v.as_object().unwrap().contains_key("wake"));
+}
+
 #[test]
 fn index_null_vs_empty_keys_entities_distinction_is_preserved() {
     let idx_nil = Index {
@@ -206,6 +252,8 @@ fn index_null_vs_empty_keys_entities_distinction_is_preserved() {
         peers: None,
         crawl: None,
         transports: None,
+        capabilities: None,
+        wake: None,
         sig: None,
     };
     let v = serde_json::to_value(&idx_nil).unwrap();
@@ -279,10 +327,112 @@ fn manifest_round_trips_sign_and_verify() {
         },
         pricing: serde_json::Value::Null,
         inbox: None,
+        environment: String::new(),
+        capabilities: None,
+        changelog: String::new(),
+        previous_sha256: String::new(),
+        compensated_by: String::new(),
         sig: None,
     };
     m.sign(&signing_key, "k1").expect("sign");
     m.verify(&signing_key.verifying_key()).expect("verify");
+}
+
+fn base_manifest() -> Manifest {
+    Manifest {
+        awp: "0.1".to_string(),
+        name: "tool.example.com#doubler".to_string(),
+        kind: "tool".to_string(),
+        version: "1.0.0".to_string(),
+        updated: identity::now_rfc3339_milli(),
+        description: "doubles a number".to_string(),
+        io: IoSchema::default(),
+        distribution: Distribution {
+            hosted: Some(Hosted {
+                endpoint: "https://tool.example.com/awp/tools/doubler".to_string(),
+            }),
+            portable: None,
+        },
+        state: "stateless".to_string(),
+        auth: Auth {
+            sig: "required".to_string(),
+            scopes: None,
+        },
+        pricing: serde_json::Value::Null,
+        inbox: None,
+        environment: String::new(),
+        capabilities: None,
+        changelog: String::new(),
+        previous_sha256: String::new(),
+        compensated_by: String::new(),
+        sig: None,
+    }
+}
+
+/// awp-capabilities-v0.1.md §2/§3: environment and capabilities sign,
+/// verify, tamper-detect, and has_capability reads them correctly.
+#[test]
+fn manifest_environment_and_capabilities_sign_verify_and_has_capability() {
+    let signing_key = fresh_key();
+    let mut m = base_manifest();
+    m.environment = "sandbox".to_string();
+    m.capabilities = Some(vec![DRY_RUN_CAPABILITY.to_string()]);
+
+    assert!(m.has_capability(DRY_RUN_CAPABILITY));
+    assert!(!m.has_capability("some-other-capability"));
+
+    m.sign(&signing_key, "k1").expect("sign");
+    m.verify(&signing_key.verifying_key()).expect("verify");
+
+    let mut tampered = m.clone();
+    tampered.environment = "production".to_string();
+    assert!(tampered.verify(&signing_key.verifying_key()).is_err());
+}
+
+#[test]
+fn manifest_environment_defaults_to_absent_meaning_production() {
+    let m = base_manifest();
+    assert_eq!(m.environment, "");
+    assert!(!m.has_capability(DRY_RUN_CAPABILITY));
+    let v = serde_json::to_value(&m).unwrap();
+    assert!(!v.as_object().unwrap().contains_key("environment"));
+}
+
+/// awp-versioning-v0.1.md §1/§2 and awp-transactions-v0.1.md §1:
+/// changelog/previous_sha256/compensated_by sign, verify, and
+/// round-trip through JSON.
+#[test]
+fn manifest_versioning_and_compensated_by_round_trip() {
+    let signing_key = fresh_key();
+    let mut m = base_manifest();
+    m.changelog = "https://tool.example.com/changelog.html".to_string();
+    m.previous_sha256 = "aa".repeat(32);
+    m.compensated_by = "tool.example.com#undo-doubler".to_string();
+    m.sign(&signing_key, "k1").expect("sign");
+    m.verify(&signing_key.verifying_key()).expect("verify");
+
+    let raw = serde_json::to_vec(&m).unwrap();
+    let round_tripped: Manifest = serde_json::from_slice(&raw).unwrap();
+    assert_eq!(round_tripped.changelog, m.changelog);
+    assert_eq!(round_tripped.previous_sha256, m.previous_sha256);
+    assert_eq!(round_tripped.compensated_by, m.compensated_by);
+    round_tripped
+        .verify(&signing_key.verifying_key())
+        .expect("verify round-tripped");
+
+    let mut tampered = round_tripped;
+    tampered.compensated_by = "tool.example.com#some-other-tool".to_string();
+    assert!(tampered.verify(&signing_key.verifying_key()).is_err());
+}
+
+#[test]
+fn manifest_versioning_fields_absent_by_default() {
+    let m = base_manifest();
+    let v = serde_json::to_value(&m).unwrap();
+    let obj = v.as_object().unwrap();
+    assert!(!obj.contains_key("changelog"));
+    assert!(!obj.contains_key("previous_sha256"));
+    assert!(!obj.contains_key("compensated_by"));
 }
 
 #[test]
@@ -304,6 +454,11 @@ fn manifest_pin_check_happens_on_raw_bytes_before_parsing() {
         },
         pricing: serde_json::Value::Null,
         inbox: None,
+        environment: String::new(),
+        capabilities: None,
+        changelog: String::new(),
+        previous_sha256: String::new(),
+        compensated_by: String::new(),
         sig: None,
     };
     m.sign(&signing_key, "k1").unwrap();

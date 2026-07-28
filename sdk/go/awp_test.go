@@ -253,6 +253,82 @@ func TestCallTool_StatelessHostedRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCallTool_DryRunAndTransactionHeadersReachHandler covers
+// awp-capabilities-v0.1.md §3.1 and awp-transactions-v0.1.md §2:
+// AWP-Dry-Run and AWP-Transaction are ordinary AWP-* headers — no
+// httpsig change needed to cover them in the signature, and the call
+// succeeding at all proves the covered-components list matched what was
+// actually signed. Verified against the real daemon-side context
+// helpers (daemon.IsDryRun, daemon.TransactionFromContext), not just
+// "a header was present on the wire."
+func TestCallTool_DryRunAndTransactionHeadersReachHandler(t *testing.T) {
+	callerPub, callerPriv := mustKeypair(t)
+
+	toolResolver := &fakeDaemonResolver{}
+	toolResolver.add("caller.example.com", "ck1", callerPub)
+	toolDaemon, toolSrv := newTestDaemon(t, "tool.example.com", toolResolver)
+
+	var gotDryRun bool
+	var gotTxn *daemon.Transaction
+	handler := func(ctx context.Context, caller string, chain []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+		gotDryRun = daemon.IsDryRun(ctx)
+		gotTxn, _ = daemon.TransactionFromContext(ctx)
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	if err := toolDaemon.RegisterTool(toolSrv.URL, daemon.Tool{Manifest: statelessManifest("tool.example.com#echo"), Handler: handler}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	c := clientForDaemon("caller.example.com", callerPriv, "ck1", map[string]*httptest.Server{
+		"tool.example.com": toolSrv,
+	})
+
+	opts := CallOptions{
+		DryRun:      true,
+		Transaction: &Transaction{ID: "01hxxx", Step: 2, Coordinator: "caller.example.com"},
+	}
+	if _, _, err := c.CallTool(context.Background(), "tool.example.com#echo", json.RawMessage(`{}`), opts); err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !gotDryRun {
+		t.Fatal("expected daemon.IsDryRun(ctx) == true")
+	}
+	if gotTxn == nil || gotTxn.ID != "01hxxx" || gotTxn.Step != 2 || gotTxn.Coordinator != "caller.example.com" {
+		t.Fatalf("got transaction %+v", gotTxn)
+	}
+}
+
+func TestCallTool_WithoutDryRunOrTransaction_NeitherObserved(t *testing.T) {
+	callerPub, callerPriv := mustKeypair(t)
+
+	toolResolver := &fakeDaemonResolver{}
+	toolResolver.add("caller.example.com", "ck1", callerPub)
+	toolDaemon, toolSrv := newTestDaemon(t, "tool.example.com", toolResolver)
+
+	var gotDryRun, gotTxnOK bool
+	handler := func(ctx context.Context, caller string, chain []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+		gotDryRun = daemon.IsDryRun(ctx)
+		_, gotTxnOK = daemon.TransactionFromContext(ctx)
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	if err := toolDaemon.RegisterTool(toolSrv.URL, daemon.Tool{Manifest: statelessManifest("tool.example.com#echo"), Handler: handler}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	c := clientForDaemon("caller.example.com", callerPriv, "ck1", map[string]*httptest.Server{
+		"tool.example.com": toolSrv,
+	})
+	if _, _, err := c.CallTool(context.Background(), "tool.example.com#echo", json.RawMessage(`{}`), CallOptions{}); err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if gotDryRun {
+		t.Fatal("expected daemon.IsDryRun(ctx) == false when CallOptions.DryRun is unset")
+	}
+	if gotTxnOK {
+		t.Fatal("expected daemon.TransactionFromContext ok=false when CallOptions.Transaction is unset")
+	}
+}
+
 func TestCallTool_ProviderSessionLifecycle(t *testing.T) {
 	callerPub, callerPriv := mustKeypair(t)
 

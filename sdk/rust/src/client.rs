@@ -70,6 +70,8 @@ pub enum ClientError {
     BuildToolCallRequest(String),
     #[error("awp: marshal delegation chain: {0}")]
     MarshalDelegation(String),
+    #[error("awp: marshal transaction header: {0}")]
+    MarshalTransaction(String),
     #[error("awp: sign tool call: {0}")]
     SignToolCall(String),
     #[error("awp: call {0}: {1}")]
@@ -101,7 +103,29 @@ pub struct SessionInfo {
     pub expires: String,
 }
 
-/// Configures an optional sync-call session/delegation.
+/// awp-transactions-v0.1.md §2: the decoded shape of an AWP-Transaction
+/// header. `id` is a ULID minted once by the coordinator for the whole
+/// transaction attempt; `step` is the 0-indexed position of this call in
+/// the coordinator's sequence — compensating calls SHOULD reuse the
+/// forward call's step, since `(id, step)` identifies "this logical unit
+/// of work," not "this specific HTTP request."
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub id: String,
+    pub step: i64,
+    pub coordinator: String,
+}
+
+impl Transaction {
+    /// base64url(JSON(self)) — the exact `AWP-Transaction` header value.
+    pub fn encode(&self) -> Result<String, ClientError> {
+        let raw =
+            serde_json::to_vec(self).map_err(|e| ClientError::MarshalTransaction(e.to_string()))?;
+        Ok(crate::b64::url_encode(&raw))
+    }
+}
+
+/// Configures an optional sync-call session/delegation/dry-run/transaction.
 #[derive(Debug, Clone, Default)]
 pub struct CallOptions {
     /// A previously-issued AWP-Session token (core §1.3). Leave empty for
@@ -110,6 +134,16 @@ pub struct CallOptions {
     /// A pre-built, pre-signed core §2.5 chain proving the caller is
     /// acting on a delegator's behalf.
     pub delegation: Vec<Link>,
+    /// Sets `AWP-Dry-Run: true` (awp-capabilities-v0.1.md §3.1) — an
+    /// ordinary `AWP-*` header, covered by the signature automatically
+    /// with no change to `httpsig::sign`'s covered-component logic.
+    /// Advisory: a provider that never declared the "dry-run" capability
+    /// MAY ignore it silently rather than reject the call.
+    pub dry_run: bool,
+    /// Sets `AWP-Transaction` (awp-transactions-v0.1.md §2) — like
+    /// `dry_run`, an ordinary `AWP-*` header covered by the signature
+    /// automatically.
+    pub transaction: Option<Transaction>,
 }
 
 /// An `IndexUrlFn` maps a domain to the URL its signed index should be
@@ -343,6 +377,46 @@ impl Client {
         Ok(e)
     }
 
+    /// Builds, signs, and delivers one awp-streaming-v0.1.md §2
+    /// stream_chunk envelope — a thin convenience wrapper over
+    /// `send_envelope` with the correct body shape, nothing more. This
+    /// SDK does not reassemble streams on the receiving side (it has no
+    /// persistent state at all, per this module's own single-delivery-
+    /// attempt design); a receiving daemon
+    /// (`internal/daemon`'s `Config.StreamChunkHandler`) does that
+    /// buffering/gap-filling.
+    ///
+    /// `kind` is typically "reply" (awp-streaming-v0.1.md §2) — pass
+    /// "message" if a caller's protocol design calls for that instead.
+    /// `stream_id` should be a fresh `envelope::new_id()` for `seq: 0` of
+    /// a new stream, then the SAME value for every subsequent chunk of
+    /// that stream. `seq` is 0-based and MUST strictly increase per
+    /// `stream_id`. `final_` MUST be `true` on exactly one chunk: the
+    /// last one (named `final_` — `final` is a reserved word in Rust).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_stream_chunk(
+        &self,
+        kind: &str,
+        to: &str,
+        thread: &str,
+        in_reply_to: Option<String>,
+        stream_id: &str,
+        seq: i64,
+        final_: bool,
+        data: Value,
+        ttl: i64,
+    ) -> Result<Envelope, ClientError> {
+        let body = serde_json::json!({
+            "type": "stream_chunk",
+            "stream_id": stream_id,
+            "seq": seq,
+            "final": final_,
+            "data": data,
+        });
+        self.send_envelope(kind, to, thread, in_reply_to, body, ttl)
+            .await
+    }
+
     /// Resolves `tool_principal`'s manifest, signs a sync HTTP call per
     /// awp-sig, and returns its output. If the provider signs its response
     /// (awp-sig §3, SHOULD), that signature is verified — a
@@ -377,6 +451,12 @@ impl Client {
             let chain_json = serde_json::to_vec(&opts.delegation)
                 .map_err(|e| ClientError::MarshalDelegation(e.to_string()))?;
             headers.set("awp-delegation", crate::b64::url_encode(&chain_json));
+        }
+        if opts.dry_run {
+            headers.set("awp-dry-run", "true".to_string());
+        }
+        if let Some(transaction) = &opts.transaction {
+            headers.set("awp-transaction", transaction.encode()?);
         }
 
         let mut sig_req = SignableRequest {

@@ -302,7 +302,31 @@ func (c *Client) SendStreamChunk(ctx context.Context, kind, to, thread string, i
 	return c.SendEnvelope(ctx, kind, to, thread, inReplyTo, body, ttl)
 }
 
-// CallOptions configures an optional sync-call session/delegation.
+// Transaction is the decoded shape of an AWP-Transaction header
+// (awp-transactions-v0.1.md §2): base64url(JSON({id, step, coordinator})).
+// id is a ULID minted once by the coordinator for the whole transaction
+// attempt; step is the 0-indexed position of this call in the
+// coordinator's sequence — compensating calls SHOULD reuse the forward
+// call's step, since (id, step) identifies "this logical unit of work,"
+// not "this specific HTTP request."
+type Transaction struct {
+	ID          string `json:"id"`
+	Step        int    `json:"step"`
+	Coordinator string `json:"coordinator"`
+}
+
+// Encode returns base64url(JSON(t)) — the exact AWP-Transaction header
+// value.
+func (t Transaction) Encode() (string, error) {
+	raw, err := json.Marshal(t)
+	if err != nil {
+		return "", fmt.Errorf("awp: marshal transaction header: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// CallOptions configures an optional sync-call session/delegation/dry-run/
+// transaction.
 type CallOptions struct {
 	// Session is a previously-issued AWP-Session token (core §1.3). Leave
 	// empty for the first call to a stateful ("provider") tool.
@@ -310,6 +334,16 @@ type CallOptions struct {
 	// Delegation is a pre-built, pre-signed core §2.5 chain proving the
 	// caller is acting on a delegator's behalf.
 	Delegation []delegation.Link
+	// DryRun sets AWP-Dry-Run: true (awp-capabilities-v0.1.md §3.1) — an
+	// ordinary AWP-* header, covered by the signature automatically with
+	// no change to httpsig.Sign's covered-component logic. Advisory: a
+	// provider that never declared the "dry-run" capability MAY ignore it
+	// silently rather than reject the call.
+	DryRun bool
+	// Transaction sets AWP-Transaction (awp-transactions-v0.1.md §2) —
+	// like DryRun, an ordinary AWP-* header covered by the signature
+	// automatically.
+	Transaction *Transaction
 }
 
 // SessionInfo is a freshly-issued sync-call session, returned by a
@@ -352,6 +386,16 @@ func (c *Client) CallTool(ctx context.Context, toolPrincipal string, input json.
 			return nil, nil, fmt.Errorf("awp: marshal delegation chain: %w", err)
 		}
 		req.Header.Set("AWP-Delegation", base64.RawURLEncoding.EncodeToString(chainJSON))
+	}
+	if opts.DryRun {
+		req.Header.Set("AWP-Dry-Run", "true")
+	}
+	if opts.Transaction != nil {
+		encoded, err := opts.Transaction.Encode()
+		if err != nil {
+			return nil, nil, err
+		}
+		req.Header.Set("AWP-Transaction", encoded)
 	}
 	if err := httpsig.Sign(req, input, c.Priv, c.keyID(), time.Now()); err != nil {
 		return nil, nil, fmt.Errorf("awp: sign tool call: %w", err)

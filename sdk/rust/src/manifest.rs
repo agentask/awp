@@ -70,6 +70,29 @@ pub struct Manifest {
     pub auth: Auth,
     pub pricing: Value,
     pub inbox: Option<String>,
+    /// awp-capabilities-v0.1.md §2: absent/empty or "production" means
+    /// production; "sandbox" marks the entity as safe to integrate
+    /// against with no real-world side effects.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub environment: String,
+    /// awp-capabilities-v0.1.md §3: entity-level feature declarations.
+    /// The only token that document defines is "dry-run".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<String>>,
+    /// awp-versioning-v0.1.md §1: an informational pointer, not fetched
+    /// or verified by anything in this crate.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub changelog: String,
+    /// awp-versioning-v0.1.md §2: the sha256 (hex) of the immediately-
+    /// prior signed manifest this one supersedes. Only verifiable by a
+    /// holder of the prior document's actual bytes.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub previous_sha256: String,
+    /// awp-transactions-v0.1.md §1: the principal of the tool that
+    /// undoes this one's effect. Absence means this tool declares no
+    /// compensating action — a step relying on it is irreversible.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub compensated_by: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sig: Option<Sig>,
 }
@@ -86,11 +109,31 @@ pub enum ManifestError {
     PinMismatch { want: String, got: String },
 }
 
+/// awp-capabilities-v0.1.md §3's token a manifest lists in `capabilities`
+/// to declare it honors `AWP-Dry-Run`.
+pub const DRY_RUN_CAPABILITY: &str = "dry-run";
+
+/// awp-capabilities-v0.1.md §2's non-production marker.
+/// `ENVIRONMENT_PRODUCTION` is the default and never needs to be set
+/// explicitly — an absent/empty `environment` means production.
+pub const ENVIRONMENT_SANDBOX: &str = "sandbox";
+pub const ENVIRONMENT_PRODUCTION: &str = "production";
+
 impl Manifest {
     /// Attaches m.sig per core §0.1, signed by domain_of(m.name)'s key.
     pub fn sign(&mut self, signing_key: &SigningKey, kid: &str) -> Result<(), ManifestError> {
         self.sig = Some(identity::sign(self, signing_key, kid)?);
         Ok(())
+    }
+
+    /// Reports whether m declares support for `capability` — e.g.
+    /// `m.has_capability(DRY_RUN_CAPABILITY)`.
+    pub fn has_capability(&self, capability: &str) -> bool {
+        self.capabilities
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .any(|c| c == capability)
     }
 
     /// Checks m.sig against pub_key. Callers resolve pub_key via

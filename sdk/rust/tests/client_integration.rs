@@ -56,6 +56,11 @@ fn build_peer(domain: &str, base_url: &str) -> PeerFixture {
         },
         pricing: serde_json::Value::Null,
         inbox: None,
+        environment: String::new(),
+        capabilities: None,
+        changelog: String::new(),
+        previous_sha256: String::new(),
+        compensated_by: String::new(),
         sig: None,
     };
     m.sign(&signing_key, &kid).expect("sign manifest");
@@ -88,6 +93,8 @@ fn build_peer(domain: &str, base_url: &str) -> PeerFixture {
         peers: None,
         crawl: None,
         transports: None,
+        capabilities: None,
+        wake: None,
         sig: None,
     };
     idx.sign(&signing_key, &kid).expect("sign index");
@@ -119,6 +126,7 @@ async fn serve(
     fixture: Arc<PeerFixture>,
     inbox_hits: Arc<AtomicUsize>,
     last_inbox_body: Arc<AsyncMutex<Vec<u8>>>,
+    last_tool_call_headers: Arc<AsyncMutex<Vec<(String, String)>>>,
 ) {
     tokio::spawn(async move {
         loop {
@@ -130,12 +138,23 @@ async fn serve(
             let fixture = fixture.clone();
             let inbox_hits = inbox_hits.clone();
             let last_inbox_body = last_inbox_body.clone();
+            let last_tool_call_headers = last_tool_call_headers.clone();
             tokio::spawn(async move {
                 let service = service_fn(move |req: Request<Incoming>| {
                     let fixture = fixture.clone();
                     let inbox_hits = inbox_hits.clone();
                     let last_inbox_body = last_inbox_body.clone();
-                    async move { handle(req, fixture, inbox_hits, last_inbox_body).await }
+                    let last_tool_call_headers = last_tool_call_headers.clone();
+                    async move {
+                        handle(
+                            req,
+                            fixture,
+                            inbox_hits,
+                            last_inbox_body,
+                            last_tool_call_headers,
+                        )
+                        .await
+                    }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(io, service)
@@ -150,6 +169,7 @@ async fn handle(
     fixture: Arc<PeerFixture>,
     inbox_hits: Arc<AtomicUsize>,
     last_inbox_body: Arc<AsyncMutex<Vec<u8>>>,
+    last_tool_call_headers: Arc<AsyncMutex<Vec<(String, String)>>>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let path = req.uri().path().to_string();
     match path.as_str() {
@@ -174,6 +194,18 @@ async fn handle(
                 .unwrap())
         }
         "/awp/tools/echo" => {
+            let captured_headers: Vec<(String, String)> = req
+                .headers()
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|v| (name.as_str().to_string(), v.to_string()))
+                })
+                .collect();
+            *last_tool_call_headers.lock().await = captured_headers;
+
             let body = req
                 .into_body()
                 .collect()
@@ -242,24 +274,27 @@ async fn start_peer(
     String,
     Arc<AtomicUsize>,
     Arc<AsyncMutex<Vec<u8>>>,
+    Arc<AsyncMutex<Vec<(String, String)>>>,
 ) {
     let (listener, base) = reserve_port().await;
     let fixture = Arc::new(build_peer(domain, &base));
     let inbox_hits = Arc::new(AtomicUsize::new(0));
     let last_body = Arc::new(AsyncMutex::new(Vec::new()));
+    let last_tool_call_headers = Arc::new(AsyncMutex::new(Vec::new()));
     serve(
         listener,
         fixture.clone(),
         inbox_hits.clone(),
         last_body.clone(),
+        last_tool_call_headers.clone(),
     )
     .await;
-    (fixture, base, inbox_hits, last_body)
+    (fixture, base, inbox_hits, last_body, last_tool_call_headers)
 }
 
 #[tokio::test]
 async fn fetch_index_verifies_self_sig_and_caches() {
-    let (_fixture, base, _hits, _body) = start_peer("peer.local").await;
+    let (_fixture, base, _hits, _body, _headers) = start_peer("peer.local").await;
 
     let caller_key = generate_keypair();
     let mut index_urls = std::collections::HashMap::new();
@@ -283,7 +318,7 @@ async fn fetch_index_verifies_self_sig_and_caches() {
 
 #[tokio::test]
 async fn fetch_manifest_verifies_pin_then_signature() {
-    let (fixture, base, _hits, _body) = start_peer("tool.local").await;
+    let (fixture, base, _hits, _body, _headers) = start_peer("tool.local").await;
 
     let caller_key = generate_keypair();
     let mut index_urls = std::collections::HashMap::new();
@@ -309,7 +344,7 @@ async fn fetch_manifest_verifies_pin_then_signature() {
 
 #[tokio::test]
 async fn send_envelope_delivers_to_inbox() {
-    let (_fixture, base, inbox_hits, last_body) = start_peer("recipient.local").await;
+    let (_fixture, base, inbox_hits, last_body, _headers) = start_peer("recipient.local").await;
 
     let caller_key = generate_keypair();
     let mut index_urls = std::collections::HashMap::new();
@@ -345,9 +380,51 @@ async fn send_envelope_delivers_to_inbox() {
     );
 }
 
+/// awp-streaming-v0.1.md §2: stream_id/seq/final/data land exactly as
+/// specified, and kind defaults to whatever the caller passes (typically
+/// "reply").
+#[tokio::test]
+async fn send_stream_chunk_delivers_correctly_shaped_body() {
+    let (_fixture, base, _hits, last_body, _headers) = start_peer("recipient.local").await;
+
+    let caller_key = generate_keypair();
+    let mut index_urls = std::collections::HashMap::new();
+    index_urls.insert(
+        "recipient.local".to_string(),
+        format!("{base}/.well-known/awp.json"),
+    );
+    let client = make_client("sender.local", caller_key, "sk1", index_urls);
+
+    let thread = awp::envelope::new_id();
+    let stream_id = awp::envelope::new_id();
+    let sent = client
+        .send_stream_chunk(
+            "reply",
+            "recipient.local#agent",
+            &thread,
+            None,
+            &stream_id,
+            0,
+            false,
+            json!({"text": "hello"}),
+            3600,
+        )
+        .await
+        .expect("send_stream_chunk");
+    assert_eq!(sent.kind, "reply");
+
+    let delivered: serde_json::Value =
+        serde_json::from_slice(&last_body.lock().await).expect("delivered body is valid JSON");
+    assert_eq!(delivered["body"]["type"], "stream_chunk");
+    assert_eq!(delivered["body"]["stream_id"], stream_id);
+    assert_eq!(delivered["body"]["seq"], 0);
+    assert_eq!(delivered["body"]["final"], false);
+    assert_eq!(delivered["body"]["data"]["text"], "hello");
+}
+
 #[tokio::test]
 async fn call_tool_signs_request_and_verifies_response() {
-    let (_fixture, base, _hits, _body) = start_peer("tool.local").await;
+    let (_fixture, base, _hits, _body, tool_call_headers) = start_peer("tool.local").await;
 
     let caller_key = generate_keypair();
     let mut index_urls = std::collections::HashMap::new();
@@ -367,4 +444,60 @@ async fn call_tool_signs_request_and_verifies_response() {
         .expect("call_tool");
     assert_eq!(output["echoed"]["n"], 42);
     assert!(session.is_none());
+
+    let headers = tool_call_headers.lock().await;
+    assert!(
+        !headers.iter().any(|(k, _)| k == "awp-dry-run"),
+        "AWP-Dry-Run must not be sent when CallOptions::dry_run is false"
+    );
+    assert!(!headers.iter().any(|(k, _)| k == "awp-transaction"));
+}
+
+/// awp-capabilities-v0.1.md §3.1 / awp-transactions-v0.1.md §2:
+/// AWP-Dry-Run and AWP-Transaction are ordinary AWP-* headers — no
+/// httpsig change needed to cover them in the signature, and the call
+/// succeeding at all proves the covered-components list matched what
+/// was actually signed.
+#[tokio::test]
+async fn call_tool_sends_dry_run_and_transaction_headers() {
+    let (_fixture, base, _hits, _body, tool_call_headers) = start_peer("tool.local").await;
+
+    let caller_key = generate_keypair();
+    let mut index_urls = std::collections::HashMap::new();
+    index_urls.insert(
+        "tool.local".to_string(),
+        format!("{base}/.well-known/awp.json"),
+    );
+    let client = make_client("caller.local", caller_key, "ck1", index_urls);
+
+    let transaction = awp::client::Transaction {
+        id: "01hxxx".to_string(),
+        step: 2,
+        coordinator: "caller.local".to_string(),
+    };
+    let opts = awp::client::CallOptions {
+        dry_run: true,
+        transaction: Some(transaction.clone()),
+        ..Default::default()
+    };
+    let (output, _) = client
+        .call_tool("tool.local#echo", json!({"n": 42}), opts)
+        .await
+        .expect("call_tool");
+    assert_eq!(output["echoed"]["n"], 42);
+
+    let headers = tool_call_headers.lock().await;
+    let dry_run = headers
+        .iter()
+        .find(|(k, _)| k == "awp-dry-run")
+        .map(|(_, v)| v.as_str());
+    assert_eq!(dry_run, Some("true"));
+    let transaction_header = headers
+        .iter()
+        .find(|(k, _)| k == "awp-transaction")
+        .map(|(_, v)| v.as_str());
+    assert_eq!(
+        transaction_header,
+        Some(transaction.encode().unwrap().as_str())
+    );
 }
