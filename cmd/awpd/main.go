@@ -47,6 +47,8 @@ type runConfig struct {
 	resolveInsecure            bool
 	quicAddr                   string
 	quicDialTimeout            time.Duration
+	ws                         bool
+	wsDialTimeout              time.Duration
 	demoEchoTool               bool
 	deadRetention              time.Duration
 }
@@ -64,6 +66,8 @@ func main() {
 	flag.BoolVar(&cfg.resolveInsecure, "resolve-insecure", false, "skip TLS certificate verification when THIS daemon resolves domain indexes or dials awp/1 peers (local/dev/self-test only; never set this in production)")
 	flag.StringVar(&cfg.quicAddr, "quic-addr", "", "awp/1 (QUIC) listen address; empty disables QUIC and advertises HTTPS-only, per awp-quic §2")
 	flag.DurationVar(&cfg.quicDialTimeout, "quic-dial-timeout", 5*time.Second, "timeout dialing a peer's awp/1 endpoint before falling back to HTTPS")
+	flag.BoolVar(&cfg.ws, "ws", false, "enable awp-ws/1 (WebSocket) transport; false disables it and advertises HTTPS(/awp-1)-only, per awp-ws §2 — needs no separate address, it shares -addr's listener")
+	flag.DurationVar(&cfg.wsDialTimeout, "ws-dial-timeout", 5*time.Second, "timeout dialing a peer's awp-ws/1 endpoint before falling back to the next transport")
 	flag.BoolVar(&cfg.demoEchoTool, "demo-echo-tool", false, "register a demo kind:tool entity (\"echo\") that returns its verified caller + input — for trying out sync tool calls; not registered by default")
 	flag.DurationVar(&cfg.deadRetention, "dead-retention", daemon.DefaultDeadRetention, "how long dead-lettered outbound envelopes are kept before hourly GC deletes them (awpd-outbox §3 outbox.dead_retention)")
 	flag.Parse()
@@ -151,6 +155,16 @@ func run(cfg runConfig) error {
 			ClientQUICConfig:  &quic.Config{},
 		}
 	}
+	if cfg.ws {
+		wsClientTLS := &tls.Config{}
+		if cfg.resolveInsecure {
+			wsClientTLS.InsecureSkipVerify = true //nolint:gosec // explicit opt-in dev flag
+		}
+		daemonCfg.WS = &daemon.WSConfig{
+			ClientTLSConfig:   wsClientTLS,
+			ClientDialTimeout: cfg.wsDialTimeout,
+		}
+	}
 
 	d, err := daemon.New(daemonCfg)
 	if err != nil {
@@ -159,7 +173,10 @@ func run(cfg runConfig) error {
 
 	var transports []identity.Transport
 	if cfg.quicAddr != "" {
-		transports = []identity.Transport{{Proto: "awp/1", Endpoint: d.QUICAddr()}}
+		transports = append(transports, identity.Transport{Proto: "awp/1", Endpoint: d.QUICAddr()})
+	}
+	if cfg.ws {
+		transports = append(transports, identity.Transport{Proto: "awp-ws/1", Endpoint: d.WSEndpoint("https://" + cfg.addr)})
 	}
 	inboxURL := "https://" + cfg.addr + "/awp/inbox"
 	if err := d.FinalizeIndex(inboxURL, transports); err != nil {
@@ -207,8 +224,15 @@ func run(cfg runConfig) error {
 				log.Printf("awpd: awp/1 server error: %v", err)
 			}
 		}()
+	}
+	switch {
+	case cfg.quicAddr != "" && cfg.ws:
+		log.Printf("awpd: domain=%s listening on %s (TLS, awp-ws/1) and %s (awp/1)", cfg.domain, cfg.addr, d.QUICAddr())
+	case cfg.quicAddr != "":
 		log.Printf("awpd: domain=%s listening on %s (TLS) and %s (awp/1)", cfg.domain, cfg.addr, d.QUICAddr())
-	} else {
+	case cfg.ws:
+		log.Printf("awpd: domain=%s listening on %s (TLS, awp-ws/1)", cfg.domain, cfg.addr)
+	default:
 		log.Printf("awpd: domain=%s listening on %s (TLS)", cfg.domain, cfg.addr)
 	}
 

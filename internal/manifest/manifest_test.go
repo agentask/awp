@@ -155,6 +155,43 @@ func TestManifestVersioningFields_AbsentByDefault(t *testing.T) {
 	}
 }
 
+// TestManifestCompensatedBy covers awp-transactions-v0.1.md §1:
+// CompensatedBy signs, verifies, and tamper-detects like any other
+// manifest field.
+func TestManifestCompensatedBy(t *testing.T) {
+	pub, priv := mustKeypair(t)
+	m := testManifest()
+	m.CompensatedBy = "example.com#cancel-invoice"
+
+	if err := m.Sign(priv, "2026-07-01"); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if err := m.Verify(pub); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+
+	tampered := *m
+	tampered.CompensatedBy = "example.com#some-other-tool"
+	if err := tampered.Verify(pub); err == nil {
+		t.Fatal("expected a tampered compensated_by to invalidate the signature")
+	}
+}
+
+func TestManifestCompensatedBy_AbsentByDefault(t *testing.T) {
+	m := testManifest()
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := d["compensated_by"]; ok {
+		t.Fatal("expected no compensated_by key when unset")
+	}
+}
+
 func TestManifestEnvironment_DefaultIsProduction(t *testing.T) {
 	m := testManifest()
 	if m.Environment != "" {

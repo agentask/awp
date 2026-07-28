@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/agentask/awp/internal/outbox"
 	"github.com/agentask/awp/internal/quictrans"
 	"github.com/agentask/awp/internal/store"
+	"github.com/agentask/awp/internal/wstrans"
 )
 
 // RFC3339Milli is core §0's timestamp format: RFC 3339 UTC, millisecond
@@ -75,6 +78,29 @@ type QUICConfig struct {
 	ClientQUICConfig *quic.Config
 }
 
+// WSConfig enables the awp-ws/1 transport (awp-ws-v0.1.md). Its absence
+// from Config means this binding is not offered — HTTPS (and awp/1, if
+// enabled) remain the only options, matching QUICConfig's own framing of
+// a negotiated upgrade, never a replacement. Unlike QUICConfig, this
+// binding needs no separate listener or bind address: it is one more
+// handler mounted on the daemon's existing HTTPS mux (awp-ws-v0.1.md §0's
+// whole point).
+type WSConfig struct {
+	// ClientTLSConfig is the base config used when this daemon dials
+	// peers over awp-ws/1. RootCAs per deployment trust policy;
+	// ServerName is set per-dial from the resolved endpoint's own host
+	// (wstrans.Dial), so it should be left unset here.
+	ClientTLSConfig *tls.Config
+	// ClientDialTimeout bounds how long a dial to an unreachable/dead
+	// awp-ws/1 endpoint is allowed to hang before FallbackSender falls
+	// back to the next transport (awp-ws-v0.1.md §5 rule 2). 0 uses
+	// wstrans.Sender's own default (10s).
+	ClientDialTimeout time.Duration
+	// Path is the HTTP path this daemon's WS upgrade handler is mounted
+	// at. "" defaults to "/awp/ws".
+	Path string
+}
+
 // Config configures a new Daemon.
 type Config struct {
 	Domain    string
@@ -86,6 +112,7 @@ type Config struct {
 	HTTP      *http.Client // used for outbound HTTPS delivery; nil uses http.DefaultClient
 	OutboxCfg outbox.Config
 	QUIC      *QUICConfig // nil = HTTPS-only
+	WS        *WSConfig   // nil = awp-ws/1 not offered
 	// DeadRetention is how long dead-lettered outbound records are kept
 	// before RunGCOnce deletes them (awpd-outbox §3 `outbox.dead_retention`).
 	// 0 uses the spec default (720h).
@@ -139,6 +166,10 @@ type Daemon struct {
 	quicListener *quic.Listener
 	quicServer   *quictrans.Server
 	quicSender   *quictrans.Sender
+
+	wsPath   string
+	wsServer *wstrans.Server
+	wsSender *wstrans.Sender
 }
 
 // New constructs a Daemon with a fresh self-signed domain index (one active
@@ -219,6 +250,27 @@ func New(cfg Config) (*Daemon, error) {
 		// the two-transport dance behind one Sender.Send call.
 		sender = &quictrans.FallbackSender{Primary: d.quicSender, Fallback: sender}
 	}
+
+	if cfg.WS != nil {
+		path := cfg.WS.Path
+		if path == "" {
+			path = "/awp/ws"
+		}
+		d.wsPath = path
+		d.wsServer = &wstrans.Server{Gate: gate}
+		d.wsSender = &wstrans.Sender{
+			TLSConfig:   cfg.WS.ClientTLSConfig,
+			DialTimeout: cfg.WS.ClientDialTimeout,
+			ResolveEndpoint: func(domain string) (string, bool, error) {
+				return cfg.Resolver.ResolveTransport(domain, "awp-ws/1")
+			},
+		}
+		// awp-ws-v0.1.md §5 rule 2 / §0's reference ordering: WebSocket is
+		// tried before awp/1 before HTTPS — wrapping the QUIC-wrapped
+		// sender here (built just above, whether or not QUIC is actually
+		// enabled) achieves exactly that chain.
+		sender = &wstrans.FallbackSender{Primary: d.wsSender, Fallback: sender}
+	}
 	d.Sender = sender
 
 	d.buildMux()
@@ -244,11 +296,33 @@ func (d *Daemon) ServeQUIC(ctx context.Context) error {
 	return d.quicServer.Serve(ctx, d.quicListener)
 }
 
-// Close releases QUIC resources (listener and any cached outbound
-// connections). A no-op if QUIC is disabled.
+// WSEndpoint converts baseHTTPSURL (this daemon's own externally
+// reachable https:// address, e.g. what an httptest.Server or a real
+// public listener produced) into the wss:// endpoint value for this
+// daemon's transports[] entry — "" if WS is disabled. Mirrors QUICAddr()'s
+// role for the awp/1 transport: the caller passes the result to
+// FinalizeIndex.
+func (d *Daemon) WSEndpoint(baseHTTPSURL string) string {
+	if d.wsServer == nil {
+		return ""
+	}
+	u, err := url.Parse(baseHTTPSURL)
+	if err != nil {
+		return ""
+	}
+	u.Scheme = "wss"
+	u.Path = strings.TrimRight(u.Path, "/") + d.wsPath
+	return u.String()
+}
+
+// Close releases QUIC and awp-ws/1 resources (listener/cached outbound
+// connections). A no-op for whichever of them is disabled.
 func (d *Daemon) Close() error {
 	if d.quicSender != nil {
 		_ = d.quicSender.Close()
+	}
+	if d.wsSender != nil {
+		_ = d.wsSender.Close()
 	}
 	if d.quicListener != nil {
 		return d.quicListener.Close()
@@ -262,6 +336,9 @@ func (d *Daemon) buildMux() {
 	mux.Handle("/awp/inbox", d.Gate)
 	mux.HandleFunc("/awp/manifests/", d.serveManifest)
 	mux.HandleFunc("/awp/tools/", d.serveToolCall)
+	if d.wsServer != nil {
+		mux.HandleFunc(d.wsPath, d.wsServer.ServeHTTP)
+	}
 	d.mux = mux
 }
 

@@ -76,8 +76,13 @@ type Manifest struct {
 	// the immediately-prior signed manifest this one supersedes. Only
 	// verifiable by a holder of the prior document's actual bytes —
 	// this package does not and cannot check it against anything.
-	PreviousSha256 string        `json:"previous_sha256,omitempty"`
-	Sig            *identity.Sig `json:"sig,omitempty"`
+	PreviousSha256 string `json:"previous_sha256,omitempty"`
+	// CompensatedBy is awp-transactions-v0.1.md §1: the principal of the
+	// tool that undoes this one's effect, for saga-style multi-tool
+	// coordination. Absence means this tool declares no compensating
+	// action — a step relying on it is irreversible.
+	CompensatedBy string        `json:"compensated_by,omitempty"`
+	Sig           *identity.Sig `json:"sig,omitempty"`
 }
 
 // DryRunCapability is the awp-capabilities-v0.1.md §3 token a manifest

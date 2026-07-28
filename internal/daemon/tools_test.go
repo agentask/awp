@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -291,6 +292,135 @@ func TestServeToolCall_NoDryRunHeaderMeansNotDryRun(t *testing.T) {
 	if gotDryRun {
 		t.Fatal("expected IsDryRun(ctx) == false when the header is absent")
 	}
+}
+
+// TestServeToolCall_TransactionHeaderReachesHandler covers
+// awp-transactions-v0.1.md §2: AWP-Transaction is an ordinary AWP-*
+// header (no httpsig change needed) and serveToolCall threads it through
+// to the handler via daemon.TransactionFromContext.
+func TestServeToolCall_TransactionHeaderReachesHandler(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	d, resolver := newToolTestDaemon(t, "provider.example.com", clock.NewFixed(now))
+	srv := httptest.NewServer(d)
+	defer srv.Close()
+
+	var gotTxn *Transaction
+	var gotOK bool
+	handler := func(ctx context.Context, caller string, chain []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+		gotTxn, gotOK = TransactionFromContext(ctx)
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	if err := d.RegisterTool(srv.URL, Tool{Manifest: statelessToolManifest("provider.example.com#echo"), Handler: handler}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	callerPub, callerPriv := mustKeypair(t)
+	resolver.add("caller.example.com", "k1", callerPub)
+
+	header := encodeTransactionHeader(t, Transaction{ID: "01hxxx", Step: 2, Coordinator: "caller.example.com"})
+	body := []byte(`{}`)
+	req := signedToolRequest(t, http.MethodPost, srv.URL+"/awp/tools/echo", body, callerPriv, "caller.example.com/k1", now,
+		map[string]string{"AWP-Transaction": header})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, raw)
+	}
+	if !gotOK {
+		t.Fatal("expected TransactionFromContext to report ok=true")
+	}
+	if gotTxn.ID != "01hxxx" || gotTxn.Step != 2 || gotTxn.Coordinator != "caller.example.com" {
+		t.Fatalf("got %+v, want {ID:01hxxx Step:2 Coordinator:caller.example.com}", gotTxn)
+	}
+}
+
+func TestServeToolCall_NoTransactionHeaderMeansNoTransaction(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	d, resolver := newToolTestDaemon(t, "provider.example.com", clock.NewFixed(now))
+	srv := httptest.NewServer(d)
+	defer srv.Close()
+
+	var gotOK bool
+	handler := func(ctx context.Context, caller string, chain []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+		_, gotOK = TransactionFromContext(ctx)
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	if err := d.RegisterTool(srv.URL, Tool{Manifest: statelessToolManifest("provider.example.com#echo"), Handler: handler}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	callerPub, callerPriv := mustKeypair(t)
+	resolver.add("caller.example.com", "k1", callerPub)
+
+	body := []byte(`{}`)
+	req := signedToolRequest(t, http.MethodPost, srv.URL+"/awp/tools/echo", body, callerPriv, "caller.example.com/k1", now, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if gotOK {
+		t.Fatal("expected TransactionFromContext ok=false when the header is absent")
+	}
+}
+
+func TestServeToolCall_MalformedTransactionHeader_Rejected(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	d, resolver := newToolTestDaemon(t, "provider.example.com", clock.NewFixed(now))
+	srv := httptest.NewServer(d)
+	defer srv.Close()
+
+	handler := func(ctx context.Context, caller string, chain []delegation.Link, input json.RawMessage) (json.RawMessage, *apperr.Error) {
+		t.Fatal("handler must not be invoked for a malformed AWP-Transaction header")
+		return nil, nil
+	}
+	if err := d.RegisterTool(srv.URL, Tool{Manifest: statelessToolManifest("provider.example.com#echo"), Handler: handler}); err != nil {
+		t.Fatalf("RegisterTool: %v", err)
+	}
+
+	callerPub, callerPriv := mustKeypair(t)
+	resolver.add("caller.example.com", "k1", callerPub)
+
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{"not valid base64url", "not-valid-base64url!!!"},
+		{"valid base64url, not JSON", base64.RawURLEncoding.EncodeToString([]byte("not json"))},
+		{"valid JSON, missing id", base64.RawURLEncoding.EncodeToString([]byte(`{"step":0}`))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{}`)
+			req := signedToolRequest(t, http.MethodPost, srv.URL+"/awp/tools/echo", body, callerPriv, "caller.example.com/k1", now,
+				map[string]string{"AWP-Transaction": tt.header})
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != 400 {
+				raw, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, body = %s, want 400", resp.StatusCode, raw)
+			}
+		})
+	}
+}
+
+func encodeTransactionHeader(t *testing.T, txn Transaction) string {
+	t.Helper()
+	raw, err := json.Marshal(txn)
+	if err != nil {
+		t.Fatalf("marshal transaction: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
 func TestServeToolCall_RejectsBadSignature(t *testing.T) {

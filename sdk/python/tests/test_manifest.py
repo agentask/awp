@@ -89,6 +89,28 @@ def test_versioning_fields_absent_by_default() -> None:
     assert "previous_sha256" not in d
 
 
+def test_compensated_by_signs_verifies_and_tamper_detected() -> None:
+    priv, pub = identity.generate_keypair()
+    m = make_manifest(compensated_by="tool.local#cancel-reservation")
+    m.sign(priv, "k1")
+    m.verify(pub)
+
+    tampered = make_manifest(compensated_by="tool.local#some-other-tool")
+    tampered.sig = m.sig
+    with pytest.raises(identity.BadSignatureError):
+        tampered.verify(pub)
+
+    raw = json.dumps(m.to_dict()).encode()
+    round_tripped = manifest.Manifest.from_dict(json.loads(raw))
+    assert round_tripped.compensated_by == m.compensated_by
+    round_tripped.verify(pub)
+
+
+def test_compensated_by_absent_by_default() -> None:
+    m = make_manifest()
+    assert "compensated_by" not in m.to_dict(with_sig=False)
+
+
 def test_pricing_and_inbox_always_present_null() -> None:
     m = make_manifest()
     d = m.to_dict(with_sig=False)

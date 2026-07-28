@@ -338,6 +338,46 @@ def test_call_tool_without_dry_run_sends_no_header() -> None:
     assert "awp-dry-run" not in peer.last_tool_call_headers
 
 
+def test_call_tool_transaction_header_signed_and_delivered() -> None:
+    """awp-transactions-v0.1.md §2: AWP-Transaction is an ordinary AWP-*
+    header — no httpsig change needed to cover it in the signature."""
+    caller_priv, caller_pub = identity.generate_keypair()
+    _CALLER_KEY_REGISTRY[("caller.example.com", "ck1")] = caller_pub
+
+    peer = FakePeer("tool.example.com")
+    m = bootstrap.new_manifest(
+        "tool.example.com#doubler", kind="tool", version="1.0.0",
+        description="doubles", state="stateless", endpoint="https://tool.example.com/tools/doubler",
+    )
+    peer.register_manifest(m)
+    peer.register_tool("tool.example.com#doubler", lambda caller, inp: {"double": inp["n"] * 2})
+
+    c = make_client_over_peers("caller.example.com", "ck1", caller_priv, {"tool.example.com": peer})
+    txn = client_mod.Transaction(id="01hxxx", step=2, coordinator="caller.example.com")
+    output, _ = c.call_tool("tool.example.com#doubler", {"n": 21}, client_mod.CallOptions(transaction=txn))
+
+    assert output == {"double": 42}
+    assert peer.last_tool_call_headers.get("awp-transaction") == txn.encode()
+
+
+def test_call_tool_without_transaction_sends_no_header() -> None:
+    caller_priv, caller_pub = identity.generate_keypair()
+    _CALLER_KEY_REGISTRY[("caller.example.com", "ck1")] = caller_pub
+
+    peer = FakePeer("tool.example.com")
+    m = bootstrap.new_manifest(
+        "tool.example.com#doubler", kind="tool", version="1.0.0",
+        description="doubles", state="stateless", endpoint="https://tool.example.com/tools/doubler",
+    )
+    peer.register_manifest(m)
+    peer.register_tool("tool.example.com#doubler", lambda caller, inp: {"double": inp["n"] * 2})
+
+    c = make_client_over_peers("caller.example.com", "ck1", caller_priv, {"tool.example.com": peer})
+    c.call_tool("tool.example.com#doubler", {"n": 21})
+
+    assert "awp-transaction" not in peer.last_tool_call_headers
+
+
 def test_call_tool_provider_session_lifecycle() -> None:
     caller_priv, caller_pub = identity.generate_keypair()
     _CALLER_KEY_REGISTRY[("caller.example.com", "ck1")] = caller_pub

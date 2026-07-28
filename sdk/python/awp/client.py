@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from . import delegation, envelope as envelope_mod, httpsig, identity, manifest as manifest_mod
+from . import b64url, delegation, envelope as envelope_mod, httpsig, identity, manifest as manifest_mod
 
 
 class RemoteRejectedError(Exception):
@@ -37,6 +37,24 @@ class ToolCallError(Exception):
 
 
 @dataclass
+class Transaction:
+    """awp-transactions-v0.1.md §2: the decoded shape of an
+    AWP-Transaction header. id is a ULID minted once by the coordinator
+    for the whole transaction attempt; step is the 0-indexed position of
+    this call in the coordinator's sequence — compensating calls SHOULD
+    reuse the forward call's step, since (id, step) identifies "this
+    logical unit of work," not "this specific HTTP request."
+    """
+    id: str
+    step: int
+    coordinator: str
+
+    def encode(self) -> str:
+        raw = json.dumps({"id": self.id, "step": self.step, "coordinator": self.coordinator}).encode()
+        return b64url.encode(raw)
+
+
+@dataclass
 class CallOptions:
     session: str = ""
     delegation: list[delegation.Link] | None = None
@@ -46,6 +64,12 @@ class CallOptions:
     # a provider that never declared the "dry-run" capability MAY ignore
     # it silently rather than reject the call.
     dry_run: bool = False
+    # transaction sets AWP-Transaction (awp-transactions-v0.1.md §2) — like
+    # dry_run, an ordinary AWP-* header covered by the signature
+    # automatically. Unlike dry_run, a present-but-malformed value is a
+    # hard error on the provider side; this SDK only ever emits a
+    # well-formed one via Transaction.encode().
+    transaction: Transaction | None = None
 
 
 @dataclass
@@ -241,6 +265,8 @@ class Client:
             headers["AWP-Delegation"] = httpsig.encode_delegation_header(opts.delegation)
         if opts.dry_run:
             headers["AWP-Dry-Run"] = "true"
+        if opts.transaction is not None:
+            headers["AWP-Transaction"] = opts.transaction.encode()
 
         signed_headers = httpsig.sign_request(
             method="POST", url=endpoint, headers=headers, body=input_bytes,

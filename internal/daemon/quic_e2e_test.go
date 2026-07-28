@@ -120,9 +120,13 @@ func newTestInstanceQUIC(t *testing.T, domain, kid string, clk clock.Clock, tabl
 
 // runMessageAckReplyCloseFlow drives the exact same protocol sequence as
 // TestE2E_MessageAckReplyClose and asserts the exact same success criteria
-// — factored out so the QUIC and QUIC-fallback variants aren't copies that
-// could silently drift from what the release criterion actually checks.
-func runMessageAckReplyCloseFlow(t *testing.T, ctx context.Context, a, b *Daemon, table *domainTable) {
+// — factored out so the QUIC, WS, and fallback variants aren't copies
+// that could silently drift from what the release criterion actually
+// checks. verifyClient is passed to newVerifyResolver for the trailing
+// independent re-verification step — nil for plain-HTTP instances, or a
+// client trusting a TLS-secured instance's self-signed cert (see
+// ws_e2e_test.go).
+func runMessageAckReplyCloseFlow(t *testing.T, ctx context.Context, a, b *Daemon, table *domainTable, verifyClient *http.Client) {
 	t.Helper()
 	threadID := envelope.NewID()
 	msg, err := a.Send("message", b.Domain, threadID, nil, json.RawMessage(`{"type":"text","text":"hello B"}`))
@@ -179,7 +183,7 @@ func runMessageAckReplyCloseFlow(t *testing.T, ctx context.Context, a, b *Daemon
 		t.Fatalf("expected no dead letters on B, got %v (err=%v)", deadB, err)
 	}
 
-	verifyResolver := newVerifyResolver(t, table)
+	verifyResolver := newVerifyResolver(t, table, verifyClient)
 	for _, m := range msgsA {
 		verifyEnvelopeSignature(t, verifyResolver, m.Envelope)
 	}
@@ -202,7 +206,7 @@ func TestE2E_MessageAckReplyClose_OverQUIC(t *testing.T) {
 	a := newTestInstanceQUIC(t, "a-quic.example.com", "k1", clock.NewFixed(now), table, pool)
 	b := newTestInstanceQUIC(t, "b-quic.example.com", "k1", clock.NewFixed(now), table, pool)
 
-	runMessageAckReplyCloseFlow(t, ctx, a, b, table)
+	runMessageAckReplyCloseFlow(t, ctx, a, b, table, nil)
 }
 
 // TestE2E_QUICFailureFallsBackToHTTPS is the other half of the Phase 4.5
@@ -222,9 +226,9 @@ func TestE2E_QUICFailureFallsBackToHTTPS(t *testing.T) {
 	// B: ordinary HTTPS-only backing, but its index LIES about an awp/1
 	// transport at a dead address.
 	b := newTestInstance(t, "b-fallback.example.com", "k1", clock.NewFixed(now), table,
-		[]identity.Transport{{Proto: "awp/1", Endpoint: "127.0.0.1:1"}})
+		[]identity.Transport{{Proto: "awp/1", Endpoint: "127.0.0.1:1"}}, nil)
 
-	runMessageAckReplyCloseFlow(t, ctx, a, b, table)
+	runMessageAckReplyCloseFlow(t, ctx, a, b, table, nil)
 }
 
 // TestDedupe_AcrossTransports is the Phase 4.5 gate's dedupe bullet: "WHEN

@@ -143,6 +143,11 @@ class Manifest:
     # verifiable by a holder of the prior document's actual bytes — this
     # module does not and cannot check it against anything.
     previous_sha256: str = ""
+    # compensated_by is awp-transactions-v0.1.md §1: the principal of the
+    # tool that undoes this one's effect, for saga-style multi-tool
+    # coordination. Absence means this tool declares no compensating
+    # action — a step relying on it is irreversible.
+    compensated_by: str = ""
     sig: identity.Sig | None = None
 
     def has_capability(self, capability: str) -> bool:
@@ -172,6 +177,8 @@ class Manifest:
             d["changelog"] = self.changelog
         if self.previous_sha256:
             d["previous_sha256"] = self.previous_sha256
+        if self.compensated_by:
+            d["compensated_by"] = self.compensated_by
         if with_sig and self.sig is not None:
             d["sig"] = self.sig.to_dict()
         return d
@@ -191,6 +198,7 @@ class Manifest:
             capabilities=list(d["capabilities"]) if d.get("capabilities") else None,
             changelog=d.get("changelog", ""),
             previous_sha256=d.get("previous_sha256", ""),
+            compensated_by=d.get("compensated_by", ""),
             sig=identity.Sig.from_dict(d["sig"]) if d.get("sig") else None,
         )
 

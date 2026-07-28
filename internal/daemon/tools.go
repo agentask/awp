@@ -179,6 +179,17 @@ func (d *Daemon) serveToolCall(w http.ResponseWriter, r *http.Request) {
 	// "dry-run" capability, and let the handler decide what to do with
 	// it (most handlers, which never call IsDryRun, execute normally).
 	ctx := WithDryRun(r.Context(), strings.EqualFold(r.Header.Get("AWP-Dry-Run"), "true"))
+
+	// awp-transactions-v0.1.md §2: unlike AWP-Dry-Run, a present-but-
+	// malformed AWP-Transaction header is a hard error — the caller
+	// claimed a shape it must actually honor.
+	txn, err := parseTransactionHeader(r.Header.Get("AWP-Transaction"))
+	if err != nil {
+		writeSyncError(w, 400, apperr.CodeMalformed, err.Error())
+		return
+	}
+	ctx = WithTransaction(ctx, txn)
+
 	output, toolErr := d.invokeTool(ctx, rt, result, body)
 	if toolErr != nil {
 		writeSyncError(w, statusForErrorCode(toolErr.Code), toolErr.Code, toolErr.Detail)

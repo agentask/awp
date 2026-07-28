@@ -979,3 +979,91 @@ docs/examples work:
 Gate: `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./... -race
 -count=1` all green; all five `examples/` re-run and matched their
 documented output.
+
+## 12-feature roadmap: Phases 0-3
+
+A separate, later planning pass (`.claude/plans/vast-plotting-teacup.md`)
+selected 12 protocol-feature ideas and sequenced them into their own
+phases 0-3 — unrelated in scope to, but confusingly numbered the same as,
+the Phase 1-5 sections above. Noted explicitly to avoid ambiguity; this
+document's earlier "Phase N" headings are the original implementation
+phases and are unaffected by anything below.
+
+**Phase 0** (commit `45305d7`): promoted `ideas/streaming.md` to
+`spec/awp-streaming-v0.1.md` and wrote `spec/awp-kinds-v0.1.md` — docs
+only, no code.
+
+**Phase 1** (commit `db7e9ba`): #9 index `capabilities`, #10 manifest
+`environment`, #7 `AWP-Dry-Run` + manifest `capabilities`, #1 `status`
+entity kind — `spec/awp-capabilities-v0.1.md`, Go + `sdk/python`, a new
+`awp-kinds-2-status-entity` conformance check.
+
+**Phase 2** (commit `0c5d507`): #11 manifest `changelog`/`previous_sha256`,
+#4 index `wake` + outbox best-effort wake notifications —
+`spec/awp-versioning-v0.1.md`, `spec/awp-push-v0.1.md`, Go + `sdk/python`,
+a new `awp-push-2-wake-reachable` conformance check.
+
+**Phase 3** (this entry): the three items the roadmap itself flagged as
+"high complexity, blocked, or needing an explicit scope decision" —
+resolved by asking the user directly rather than guessing:
+
+1. **#6 transactional multi-tool calls** — user chose "full cross-domain
+   design now" over descoping to same-domain-only or deferring outright.
+   The honest full design for atomicity across independently-operated,
+   mutually-untrusting domains is the **saga pattern** (compensating
+   actions), not two-phase commit — no shared coordinator/escrow exists
+   in AWP's trust model for 2PC to lock against. `spec/awp-transactions-v0.1.md`
+   §0 states this tradeoff explicitly rather than quietly settling for
+   sagas without saying why 2PC was rejected. Added manifest
+   `compensated_by` (Go + `sdk/python`) and the `AWP-Transaction` sync-call
+   header (an ordinary `AWP-*` header, zero httpsig changes, exactly like
+   `AWP-Dry-Run` — but unlike it, a malformed value is a hard 400, since
+   the header has an invalid non-empty state dry-run's boolean doesn't).
+   Two new conformance checks: `awp-transactions-5.2-malformed-header-rejected`,
+   `awp-transactions-5.3-compensated-by-resolvable`.
+2. **#3 WebSocket transport** — user chose "do the full WebSocket phase
+   now," sized like the original QUIC work (Phase 4.5 above). Added
+   `internal/wstrans`: a from-scratch RFC 6455 client/server (handshake +
+   frame codec), deliberately hand-rolled rather than pulling a
+   WebSocket library — the same minimal-in-house-subset principle
+   CLAUDE.md states for RFC 9421, extended to this binding since AWP's
+   own use of WebSocket needs far less than a general-purpose
+   implementation (no fragmentation, no ping/pong, no extensions —
+   `spec/awp-ws-v0.1.md` §4 documents each simplification). Unlike
+   `awp/1`, this binding shares the daemon's existing HTTPS listener
+   (no new bind address) and multiplexes many concurrent envelopes over
+   one connection, correlated by envelope `id` (QUIC gets that
+   correlation for free from one stream per envelope; this binding does
+   not, since it's a single ordered byte stream). Wired into
+   `internal/daemon` (`Config.WS`, `WSEndpoint`) and `cmd/awpd` (`-ws`,
+   `-ws-dial-timeout`), with its own e2e tests
+   (`TestE2E_MessageAckReplyClose_OverWS`,
+   `TestE2E_WSFailureFallsBackToHTTPS`, `TestDedupe_AcrossWSAndHTTPS`) and
+   an independent (not importing `internal/wstrans`) black-box
+   conformance prober, `internal/conformance/ws8.go`, exactly mirroring
+   `quic8.go`'s own "speak the wire format itself" principle.
+3. **#8 pre-flight cost estimation** — left deferred, no code or spec
+   changes. Still blocked exactly as the roadmap plan states: `pricing`
+   is `null`-reserved for v0.2 (core §1.2), and no cost-estimate call can
+   be designed against a pricing model that doesn't exist yet.
+
+**Shared-helper fallout (Go daemon e2e tests):** adding a TLS-secured
+transport (WS) to a test suite that had only ever exercised plain-HTTP
+and QUIC-with-plain-HTTP-inbox instances required threading an
+`*http.Client`/cert-pool through `newTestInstance`, `newVerifyResolver`,
+and `runMessageAckReplyCloseFlow` (all previously assumed no peer ever
+needed anything but the zero-value default client) — a signature change
+touching every existing call site in `internal/daemon`'s e2e test files,
+not just the new WS ones. All pre-existing QUIC/plain-HTTP e2e tests were
+re-run and still pass unchanged.
+
+Gate: `go build ./...`, `go vet ./...`, `gofmt -l .` clean; `go test
+./... -race -count=1` green across every package except the
+already-isolated, pre-existing, unrelated `agents/go` data race
+(`TestInbox_DedupesRepeatedID`, first identified and confirmed
+pre-existing during Phase 1 above via a `git stash` comparison); 100
+concurrent envelopes correctly multiplexed on one `internal/wstrans`
+connection in both the package's own tests and its conformance prober;
+real Go-signs/Python-verifies interop cross-checks for `compensated_by`
+(tamper-detected) via a temporary in-repo scratch program, cleaned up
+afterward.

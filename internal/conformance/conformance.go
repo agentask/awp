@@ -123,6 +123,9 @@ func Run(ctx context.Context, domain string, opts Options) Report {
 		for _, c := range remainingQUICChecks() {
 			add(CheckResult{ID: c.id, Description: c.desc, Status: Skip, Detail: "index fetch/verification failed; see core-5.1"})
 		}
+		for _, c := range remainingWSChecks() {
+			add(CheckResult{ID: c.id, Description: c.desc, Status: Skip, Detail: "index fetch/verification failed; see core-5.1"})
+		}
 		return report
 	}
 
@@ -132,10 +135,15 @@ func Run(ctx context.Context, domain string, opts Options) Report {
 	for _, result := range runQUICChecks(ctx, domain, idx, opts) {
 		add(result)
 	}
+	for _, result := range runWSChecks(ctx, domain, idx, opts) {
+		add(result)
+	}
 	// Beyond the two named checklists (see sync_sig.go's doc comment).
 	add(checkResponseSigning(ctx, opts, idx))
 	add(checkStatusEntity(ctx, opts, idx))
 	add(checkWakeEndpointReachable(ctx, opts, idx))
+	add(checkMalformedTransactionRejected(ctx, opts, idx))
+	add(checkCompensatedByResolvable(ctx, opts, idx))
 	return report
 }
 

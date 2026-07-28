@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
@@ -46,7 +47,13 @@ func (t *domainTable) get(domain string) string {
 // production. transports lets a test make this instance advertise (without
 // necessarily backing) additional transports, e.g. a deliberately
 // unreachable awp/1 endpoint for fallback testing; nil means HTTPS-only.
-func newTestInstance(t *testing.T, domain, kid string, clk clock.Clock, table *domainTable, transports []identity.Transport) *Daemon {
+// httpClient is nil for this package's plain-HTTP instances (the common
+// case, matching http.DefaultClient); a test mixing this instance with a
+// TLS-secured one (see ws_e2e_test.go) passes a client trusting that
+// peer's self-signed cert, since this instance's own resolver and
+// outbound sender both need to reach that peer too (fetching its index,
+// delivering acks/replies to it).
+func newTestInstance(t *testing.T, domain, kid string, clk clock.Clock, table *domainTable, transports []identity.Transport, httpClient *http.Client) *Daemon {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -60,8 +67,9 @@ func newTestInstance(t *testing.T, domain, kid string, clk clock.Clock, table *d
 	t.Cleanup(func() { _ = st.Close() })
 
 	resolver := &keyresolver.HTTPResolver{
-		Store: st,
-		Clock: clk,
+		Store:  st,
+		Clock:  clk,
+		Client: httpClient,
 		BaseURL: func(d string) string {
 			return table.get(d)
 		},
@@ -74,6 +82,7 @@ func newTestInstance(t *testing.T, domain, kid string, clk clock.Clock, table *d
 		Store:    st,
 		Clock:    clk,
 		Resolver: resolver,
+		HTTP:     httpClient,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -138,8 +147,8 @@ func TestE2E_MessageAckReplyClose(t *testing.T) {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	table := newDomainTable()
 
-	a := newTestInstance(t, "a.example.com", "k1", clock.NewFixed(now), table, nil)
-	b := newTestInstance(t, "b.example.com", "k1", clock.NewFixed(now), table, nil)
+	a := newTestInstance(t, "a.example.com", "k1", clock.NewFixed(now), table, nil, nil)
+	b := newTestInstance(t, "b.example.com", "k1", clock.NewFixed(now), table, nil, nil)
 
 	threadID := envelope.NewID()
 	msg, err := a.Send("message", "b.example.com", threadID, nil, json.RawMessage(`{"type":"text","text":"hello B"}`))
@@ -229,7 +238,7 @@ func TestE2E_MessageAckReplyClose(t *testing.T) {
 	// signature, rather than inferring "it must have verified" from the
 	// absence of dead letters alone ---
 
-	verifyResolver := newVerifyResolver(t, table)
+	verifyResolver := newVerifyResolver(t, table, nil)
 	for _, m := range msgsA {
 		verifyEnvelopeSignature(t, verifyResolver, m.Envelope)
 	}
@@ -238,7 +247,12 @@ func TestE2E_MessageAckReplyClose(t *testing.T) {
 	}
 }
 
-func newVerifyResolver(t *testing.T, table *domainTable) *keyresolver.HTTPResolver {
+// newVerifyResolver builds a resolver purely for a test's own post-hoc
+// signature re-verification, independent of whatever resolver the
+// Daemon(s) under test use. httpClient is nil for this package's plain-
+// HTTP e2e tests; a WS-enabled instance's TLS-secured listener needs a
+// client trusting its self-signed cert (see ws_e2e_test.go).
+func newVerifyResolver(t *testing.T, table *domainTable, httpClient *http.Client) *keyresolver.HTTPResolver {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "verify.db"))
 	if err != nil {
@@ -246,8 +260,9 @@ func newVerifyResolver(t *testing.T, table *domainTable) *keyresolver.HTTPResolv
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return &keyresolver.HTTPResolver{
-		Store: st,
-		Clock: clock.Real{},
+		Store:  st,
+		Clock:  clock.Real{},
+		Client: httpClient,
 		BaseURL: func(d string) string {
 			return table.get(d)
 		},
